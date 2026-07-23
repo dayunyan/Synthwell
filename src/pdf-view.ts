@@ -39,8 +39,9 @@ export class PdfView extends ItemView {
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     const ctx = canvas.getContext("2d")!;
-    await page.render({ canvasContext: ctx, canvas, viewport } as any).promise;
+    await page.render({ canvasContext: ctx, canvas, viewport }).promise;
 
+    // stashed for Task 5/6 cleanup; intentionally leaking until onClose lands
     (this as any)._doc = doc;
     (this as any)._page = page;
     (this as any)._canvas = canvas;
