@@ -1,0 +1,9 @@
+{
+  "id": "shiyue",
+  "name": "拾阅 / Shiyue",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.4",
+  "description": "CJK-first local PDF reading + highlighting + AI + WeRead import",
+  "author": "xujunda",
+  "isDesktopOnly": true
+}
