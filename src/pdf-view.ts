@@ -44,7 +44,10 @@ export class PdfView extends ItemView {
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     const ctx = canvas.getContext("2d")!;
-    await page.render({ canvasContext: ctx, canvas, viewport }).promise;
+    // v4 RenderParameters takes { canvasContext, viewport } only — the
+    // `canvas` field is a v6 addition absent in v4 (see
+    // node_modules/pdfjs-dist/types/src/display/api.d.ts RenderParameters).
+    await page.render({ canvasContext: ctx, viewport }).promise;
 
     // stashed for Task 5/6 cleanup; intentionally leaking until onClose lands
     (this as any)._doc = doc;
