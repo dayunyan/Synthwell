@@ -30,8 +30,11 @@ export class PdfView extends ItemView {
     el.empty();
     configureWorker(); // Task 4 后此调用才真正生效
 
-    const buf = await this.app.vault.adapter.readBinary(file.path);
-    const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+    // Read via getResourcePath + fetch (routes through Obsidian's entitled
+    // webview layer); vault.adapter.readBinary hits EPERM under macOS TCC.
+    const resourcePath = this.app.vault.adapter.getResourcePath(file.path);
+    const buf = await (await fetch(resourcePath)).arrayBuffer();
+    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
     const page = await doc.getPage(1);
     const viewport = page.getViewport({ scale: 1.5 });
 
