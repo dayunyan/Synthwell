@@ -1,4 +1,6 @@
 import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
+import * as pdfjsLib from "pdfjs-dist";
+import { configureWorker } from "./pdf-worker";
 
 export const SHIYUE_PDF_VIEW = "shiyue-pdf-view";
 
@@ -24,8 +26,23 @@ export class PdfView extends ItemView {
 
   async setFile(file: TFile) {
     this.file = file;
-    this.contentEl.empty();
-    this.contentEl.createEl("div", { text: `加载中: ${file.basename}` });
-    // Task 3 在此渲染
+    const el = this.contentEl;
+    el.empty();
+    configureWorker(); // Task 4 后此调用才真正生效
+
+    const buf = await this.app.vault.adapter.readBinary(file.path);
+    const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+    const page = await doc.getPage(1);
+    const viewport = page.getViewport({ scale: 1.5 });
+
+    const canvas = el.createEl("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext("2d")!;
+    await page.render({ canvasContext: ctx, canvas, viewport } as any).promise;
+
+    (this as any)._doc = doc;
+    (this as any)._page = page;
+    (this as any)._canvas = canvas;
   }
 }
