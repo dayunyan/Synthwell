@@ -1,4 +1,6 @@
 node_modules/
 main.js
+pdf.worker.min.mjs
 dist/
 *.log
+test-vault/

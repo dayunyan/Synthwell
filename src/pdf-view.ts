@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
+import { ItemView, Plugin, WorkspaceLeaf, TFile } from "obsidian";
 import * as pdfjsLib from "pdfjs-dist";
 import { configureWorker } from "./pdf-worker";
 
@@ -6,9 +6,11 @@ export const SHIYUE_PDF_VIEW = "shiyue-pdf-view";
 
 export class PdfView extends ItemView {
   file: TFile | null = null;
+  private readonly plugin: Plugin;
 
-  constructor(leaf: WorkspaceLeaf) {
+  constructor(leaf: WorkspaceLeaf, plugin: Plugin) {
     super(leaf);
+    this.plugin = plugin;
   }
 
   getViewType(): string { return SHIYUE_PDF_VIEW; }
@@ -28,7 +30,7 @@ export class PdfView extends ItemView {
     this.file = file;
     const el = this.contentEl;
     el.empty();
-    configureWorker(); // Task 4 后此调用才真正生效
+    configureWorker(this.app, this.plugin);
 
     // Read via getResourcePath + fetch (routes through Obsidian's entitled
     // webview layer); vault.adapter.readBinary hits EPERM under macOS TCC.

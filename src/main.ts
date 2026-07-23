@@ -3,7 +3,7 @@ import { PdfView, SHIYUE_PDF_VIEW } from "./pdf-view";
 
 export default class ShiyuePlugin extends Plugin {
   async onload() {
-    this.registerView(SHIYUE_PDF_VIEW, (leaf) => new PdfView(leaf));
+    this.registerView(SHIYUE_PDF_VIEW, (leaf) => new PdfView(leaf, this));
 
     this.addCommand({
       id: "open-pdf-in-shiyue",
