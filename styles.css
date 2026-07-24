@@ -1,18 +1,45 @@
-/* E4 (task 7): text-layer CSS so pdfjs TextLayer spans align with the canvas
-   glyphs and the text becomes selectable. Copied (lightly trimmed) from
-   node_modules/pdfjs-dist/web/pdf_viewer.css (.textLayer rules, lines 583-709)
-   and scoped under .shiyue-page so they don't collide with Obsidian's own
-   styles. v4 ships no standalone text-layer CSS file, so this minimal extract
-   is what makes selection work. Alignment quality on CJK is the spike's open
-   observation — v4 lacks the #20334 word-spacing fix; the human should observe
-   whether horizontal CJK selection is usable anyway. */
+/* P1 (selection): FULL pdfjs text-layer CSS, copied verbatim from
+   node_modules/pdfjs-dist/web/pdf_viewer.css (.textLayer rules,
+   lines 885-1023) and scoped under .shiyue-page so they don't collide with
+   Obsidian's own .textLayer (Obsidian ships its own for the native PDF view).
 
-/* .shiyue-page is the positioned ancestor for both the canvas (z-index:1)
-   and the textLayer (z-index:2, on top) so spans sit over the visible
-   glyphs and are selectable. position:relative is required for the
-   absolute children to anchor here rather than to the scroll container. */
+   This replaces the previous MINIMAL extract. The minimal extract was the
+   root cause of the selection showstopper — it OMITTED three load-bearing
+   pieces that pdfjs's own viewer relies on:
+
+   (1) The `.textLayer` --min-font-size / --text-scale-factor vars (line 913-917)
+       AND the span `font-size:calc(var(--text-scale-factor) * var(--font-height))`
+       + `transform:rotate(...) scaleX(...) scale(...)` rules (line 919-928).
+       Without these, spans got the browser's default font-size/line-box, so
+       the transparent selection hitboxes were the wrong height AND the wrong
+       width (no per-glyph scaleX) — the "框比字高/矮一截" vertical offset
+       and the CJK-width mismatch. This is THE alignment fix.
+   (2) The `.endOfContent` element + the `.textLayer.selecting .endOfContent`
+       rule (line 1021). The element itself is now created by TextLayerBuilder
+       (pdf_viewer.mjs 6024-6027); the CSS here just positions it. The builder's
+       global selection listener MOVES this element next to the active anchor
+       on every selectionchange, which is what bounds selection at line/page
+       edges (fixes "last chars grab next lines" + "drag to edge selects whole
+       page").
+   (3) `line-height:1` on .textLayer (line 891) — without it the inherited
+       Obsidian line-height inflated span boxes vertically.
+
+   Do NOT trim rules here that touch font-size / transform / position —
+   they are the alignment math. */
+
+/* .shiyue-page is the positioned ancestor for the canvas (z-index:1) and the
+   textLayer (z-index:2, on top). It also carries the scale CSS vars the span
+   font-size calc depends on (mirroring .pdfViewer .page in pdf_viewer.css
+   line 6737-6741): --scale-factor is set per-page by JS (pdf-view.ts) to
+   viewport.scale; --user-unit defaults to 1 (JS sets it only when the page
+   has a non-1 user unit); --total-scale-factor composes them; --scale-round-*
+   are the pixel-rounding steps setLayerDimensions may use. */
 .shiyue-page {
   position: relative;
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor, 1) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
 }
 
 .shiyue-page canvas {
@@ -34,11 +61,11 @@
   forced-color-adjust: none;
   transform-origin: 0 0;
   caret-color: CanvasText;
-  /* above the canvas so spans receive pointer events for selection */
+  /* pdfjs uses z-index:0 on .textLayer (the canvas sits in a sibling
+     .canvasWrapper above it in its layout). Our canvas is z-index:1, so we
+     raise the textLayer above it so transparent spans receive the pointer
+     events for selection. */
   z-index: 2;
-  /* pdfjs sometimes sets pointer-events:none on .textLayer; ensure the
-     container itself stays interactive so drag-selection works. Individual
-     spans are explicitly made auto below as a belt-and-braces. */
   pointer-events: auto;
 }
 
@@ -49,16 +76,36 @@
   cursor: text;
   transform-origin: 0% 0%;
   /* explicit selectability — without these some Electron builds make the
-     transparent spans unselectable (pointer-events:none inherited), which
-     is the exact symptom the human saw: canvas visible but no selection. */
+     transparent spans unselectable (pointer-events:none inherited). */
   user-select: text;
   -webkit-user-select: text;
   pointer-events: auto;
 }
 
+/* The font-size + transform math pdfjs relies on for per-glyph alignment.
+   --text-scale-factor (defined just below) * the inline --font-height pdfjs
+   sets on each span => the span's font-size matches the glyph height; the
+   scaleX/rotate transform matches the glyph's horizontal scale/rotation.
+   This block was MISSING from the old minimal extract — it is the core of
+   the alignment fix. */
+.shiyue-page .textLayer {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
 .shiyue-page .textLayer > :not(.markedContent),
 .shiyue-page .textLayer .markedContent span:not(.markedContent) {
   z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.shiyue-page .textLayer .markedContent {
+  display: contents;
 }
 
 .shiyue-page .textLayer span.markedContent {
@@ -91,6 +138,12 @@
   background: transparent;
 }
 
+/* `.endOfContent` is created by TextLayerBuilder and, when selecting, moved
+   next to the active anchor by the builder's global selectionchange listener
+   (pdf_viewer.mjs 6130-6163). At rest it sits just past the bottom of the
+   textLayer (inset:100% 0 0); during active selection `.selecting` flattens
+   it to cover the layer so the browser's auto-extend stops at the page
+   boundary. This is what bounds line-end + page-edge selection. */
 .shiyue-page .textLayer .endOfContent {
   display: block;
   position: absolute;
