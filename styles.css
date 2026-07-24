@@ -1,0 +1,86 @@
+/* E4 (task 7): text-layer CSS so pdfjs TextLayer spans align with the canvas
+   glyphs and the text becomes selectable. Copied (lightly trimmed) from
+   node_modules/pdfjs-dist/web/pdf_viewer.css (.textLayer rules, lines 583-709)
+   and scoped under .shiyue-page so they don't collide with Obsidian's own
+   styles. v4 ships no standalone text-layer CSS file, so this minimal extract
+   is what makes selection work. Alignment quality on CJK is the spike's open
+   observation — v4 lacks the #20334 word-spacing fix; the human should observe
+   whether horizontal CJK selection is usable anyway. */
+
+.shiyue-page {
+  position: relative;
+}
+
+.shiyue-page .textLayer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  -webkit-text-size-adjust: none;
+  -moz-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+}
+
+.shiyue-page .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.shiyue-page .textLayer > :not(.markedContent),
+.shiyue-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+}
+
+.shiyue-page .textLayer span.markedContent {
+  top: 0;
+  height: 0;
+}
+
+.shiyue-page .textLayer span[role="img"] {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+.shiyue-page .textLayer ::-moz-selection {
+  background: rgba(0 0 255 / 0.25);
+  background: color-mix(in srgb, AccentColor, transparent 75%);
+}
+
+.shiyue-page .textLayer ::selection {
+  background: rgba(0 0 255 / 0.25);
+  background: color-mix(in srgb, AccentColor, transparent 75%);
+}
+
+.shiyue-page .textLayer br::-moz-selection {
+  background: transparent;
+}
+
+.shiyue-page .textLayer br::selection {
+  background: transparent;
+}
+
+.shiyue-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+}
+
+.shiyue-page .textLayer.selecting .endOfContent {
+  top: 0;
+}
