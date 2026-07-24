@@ -4,3 +4,4 @@ pdf.worker.min.mjs
 dist/
 *.log
 test-vault/
+docs/superpowers/spike/shiyue-spike-build.zip
