@@ -7,8 +7,18 @@
    observation — v4 lacks the #20334 word-spacing fix; the human should observe
    whether horizontal CJK selection is usable anyway. */
 
+/* .shiyue-page is the positioned ancestor for both the canvas (z-index:1)
+   and the textLayer (z-index:2, on top) so spans sit over the visible
+   glyphs and are selectable. position:relative is required for the
+   absolute children to anchor here rather than to the scroll container. */
 .shiyue-page {
   position: relative;
+}
+
+.shiyue-page canvas {
+  display: block;
+  position: relative;
+  z-index: 1;
 }
 
 .shiyue-page .textLayer {
@@ -24,7 +34,12 @@
   forced-color-adjust: none;
   transform-origin: 0 0;
   caret-color: CanvasText;
-  z-index: 0;
+  /* above the canvas so spans receive pointer events for selection */
+  z-index: 2;
+  /* pdfjs sometimes sets pointer-events:none on .textLayer; ensure the
+     container itself stays interactive so drag-selection works. Individual
+     spans are explicitly made auto below as a belt-and-braces. */
+  pointer-events: auto;
 }
 
 .shiyue-page .textLayer :is(span, br) {
@@ -33,6 +48,12 @@
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
+  /* explicit selectability — without these some Electron builds make the
+     transparent spans unselectable (pointer-events:none inherited), which
+     is the exact symptom the human saw: canvas visible but no selection. */
+  user-select: text;
+  -webkit-user-select: text;
+  pointer-events: auto;
 }
 
 .shiyue-page .textLayer > :not(.markedContent),

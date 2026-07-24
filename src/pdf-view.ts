@@ -64,6 +64,13 @@ export class PdfView extends ItemView {
   private onSelectionEnd() {
     const sel = window.getSelection();
     const selected = sel?.toString().trim() ?? "";
+    // Observability: log EVERY non-empty selection so the human can confirm
+    // mouseup + selection detection is firing (independent of whether a
+    // .shiyue-page ancestor + pageText are found). If this never logs, the
+    // text layer spans aren't selectable at all.
+    if (selected) {
+      console.info("[shiyue] mouseup selection=" + JSON.stringify(selected.slice(0, 60)));
+    }
     if (!selected) return;
     // walk up from the anchor node to the .shiyue-page placeholder.
     const node = sel?.anchorNode;
@@ -187,8 +194,30 @@ export class PdfView extends ItemView {
     let textLayer: TextLayerInstance | null = null;
     this.renderedPages.set(p, { canvas, task, page, textLayer: null });
     ph.style.minHeight = ""; // clear placeholder height once real canvas laid out
+    // E4 debug: the canvas render and the TextLayer render are independent
+    // failure modes. Previously a single try/catch swallowed TextLayer errors
+    // AND destroyed the (successfully rendered) canvas — so the human saw no
+    // log at all and selection silently never worked. Now: canvas render has
+    // its own try (scroll-away cancel still tears down the page as before);
+    // the TextLayer path is a SEPARATE try that logs the error explicitly and
+    // KEEPS the canvas so the human still sees the page. Errors are never
+    // swallowed silently — they all surface to the console.
     try {
       await task.promise;
+    } catch (err) {
+      // cancelled render (scroll-away) — clean up the partial entry iff it
+      // still points at this task (a re-render may have replaced it).
+      if (this.renderedPages.get(p)?.task === task) this.destroyPage(p);
+      return;
+    }
+    // If the page was scrolled away / destroyed while getPage or the canvas
+    // render was in flight, bail before building the text layer (no work to
+    // anchor it to).
+    if (!this.doc || !this.renderedPages.has(p)) {
+      try { page.cleanup(); } catch { /* ignore */ }
+      return;
+    }
+    try {
       // Build the text layer AFTER the canvas render so layout is settled.
       // textContentSource accepts either a TextContent or a ReadableStream;
       // we pass the resolved TextContent directly (simpler, and we need the
@@ -209,10 +238,18 @@ export class PdfView extends ItemView {
       });
       this.renderedPages.get(p)!.textLayer = textLayer;
       await textLayer.render();
+      // Observability: confirm the text layer rendered + how many spans it
+      // produced. If spans is 0 the PDF page has no extractable text (e.g. a
+      // scanned/image PDF) — selection can't work and this log explains why.
+      console.info(
+        "[shiyue] textlayer page", p,
+        "spans", textLayerDiv.querySelectorAll("span").length,
+      );
     } catch (err) {
-      // cancelled render (scroll-away) — clean up the partial entry iff it
-      // still points at this task (a re-render may have replaced it).
-      if (this.renderedPages.get(p)?.task === task) this.destroyPage(p);
+      // Do NOT destroy the page — the canvas is already on screen. Log the
+      // TextLayer failure explicitly so the human sees what broke (previously
+      // this was silently swallowed, matching the "no console output" symptom).
+      console.error("[shiyue] textlayer FAILED page", p, err);
     }
   }
 
