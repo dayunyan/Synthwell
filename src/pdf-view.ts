@@ -179,11 +179,12 @@ export class PdfView extends ItemView {
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     canvas.style.width = "100%";
-    const ctx = canvas.getContext("2d")!;
-    // v4 RenderParameters takes { canvasContext, viewport } only — the
-    // `canvas` field is a v6 addition absent in v4 (see
-    // node_modules/pdfjs-dist/types/src/display/api.d.ts RenderParameters).
-    const task = page.render({ canvasContext: ctx, viewport });
+    // v5 RenderParameters requires `canvas` (not `canvasContext`): the ctx form
+    // is deprecated and needs canvas: null explicitly. We pass the canvas
+    // directly and let pdfjs obtain the 2D context — cleaner and types align
+    // without `as any`. See node_modules/pdfjs-dist/types/src/display/api.d.ts
+    // RenderParameters (canvas: HTMLCanvasElement | null, required).
+    const task = page.render({ canvas, viewport });
     // E4: overlay a pdfjs TextLayer on the canvas so text is selectable. The
     // spans are transparent (color:transparent in styles.css) and positioned to
     // match glyph coordinates, so they sit *on top* of the canvas. Selection
