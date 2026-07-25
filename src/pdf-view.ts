@@ -1,66 +1,63 @@
+// PIVOT: embed pdfjs's OWN PDFViewer component instead of hand-rolling canvas +
+// textLayer per page. Two prior hand-rolled attempts (minimal `new TextLayer(...)`,
+// then `TextLayerBuilder`) both failed to fully fix text selection: mid-line
+// selection was accurate, but line-end/page-edge over-selection persisted (the
+// `.endOfContent` selection-bounding machinery + the global `selectionchange`
+// listener need the FULL PDFViewer/PDFPageView context to activate). pdfjs's own
+// viewer gets selection right by construction — every PDF app and the existing
+// Obsidian Annotator plugin use it. This embed delegates virtualization, scroll,
+// height-computation, textLayer, AND selection bounding to pdfjs.
+//
+// Source evidence (node_modules/pdfjs-dist v5.4.530):
+//  - PDFViewer class: web/pdf_viewer.mjs line 7666. Constructor (7700-7786):
+//      * this.container = options.container (7705); this.viewer =
+//        options.viewer || options.container.firstElementChild (7706).
+//      * BOTH must be <DIV> (7708-7709 throws "Invalid container and/or viewer").
+//      * container MUST be position:absolute — 7711-7712 throws "The container
+//        must be absolutely positioned" when offsetParent is set (it is, in the
+//        Obsidian leaf) and computed position != "absolute". So our container
+//        div is styled position:absolute;inset:0.
+//      * l10n defaults to new GenericL10n() (7743) when omitted — GenericL10n
+//        (3664) #getPaths (3704-3718) silently catches the missing
+//        <link type="application/l10n"> and returns empty paths, so #createBundle
+//        returns null and #generateBundlesFallback (3720) yields a hardcoded
+//        English bundle. NO network fetch can fail in Obsidian. Safe to omit.
+//      * textLayerMode defaults to TextLayerMode.ENABLE = 1 (7727; const 142-144).
+//      * annotationMode defaults to AnnotationMode.ENABLE_FORMS = 2 (7728).
+//      * viewerVersion check (7701-7703): pdf_viewer.mjs bundles its own
+//        `version` import (line 107), so the check passes internally.
+//  - setDocument: web/pdf_viewer.mjs line 8070. Renders pages into this.viewer.
+//  - DOM: PDFPageView sets div.className="page" + data-page-number (6325-6326),
+//    .canvasWrapper (6839-6841) > canvas, .textLayer (5993). The CONSUMER must
+//    add the `.pdfViewer` class to the viewer div — pdfjs does NOT add it (grep
+//    shows no classList.add("pdfViewer")). The canonical pdfjs HTML is
+//    <div id="viewer" class="pdfViewer">. CSS (pdf_viewer.css 6691+) scopes
+//    every rule under .pdfViewer, so that class is load-bearing.
+//  - PDFViewer handles its OWN virtualization/scrolling/height via watchScroll
+//    (7767) + ResizeObserver (7693/9186) + the default PDFRenderingQueue
+//    (7752-7754). We must NOT add our own IntersectionObserver or placeholder
+//    heights — that fights PDFViewer.
+//  - getPageView(index) (7793) returns the PDFPageView; its .textLayer holds the
+//    rendered TextLayerBuilder. .page[data-page-number] divs are in the DOM.
 import { ItemView, Plugin, WorkspaceLeaf, TFile } from "obsidian";
 import * as pdfjsLib from "pdfjs-dist";
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
-// P1 (selection): use pdfjs's OWN TextLayerBuilder instead of hand-rolling
-// `new TextLayer(...)`. The builder is the component pdfjs's own PDFPageView
-// uses (node_modules/pdfjs-dist/web/pdf_viewer.mjs TextLayerBuilder, exported
-// at line 9358; constructed at PDFPageView.draw line 6877). Two reasons this is
-// the correct fix, not a cosmetic swap:
-//
-//  (1) `.endOfContent` + the global selection listener. The builder's
-//      #bindMouse + #enableGlobalSelectionListener (pdf_viewer.mjs 6051-6167)
-//      create the `.endOfContent` element AND, on every `selectionchange`, MOVE
-//      it next to the active selection anchor sized to the textLayer. That
-//      element is what bounds selection at page/line edges — without it the
-//      browser keeps extending the selection past the last glyph into the
-//      next line / next page (the "drag to edge selects whole page" + "last
-//      chars of a line grab the next several lines" showstoppers). Our old
-//      hand-rolled `new TextLayer(...)` never ran #bindMouse, so the
-//      `.endOfContent` div sat inert at `inset:100% 0 0` and did nothing.
-//      There is no clean way to replicate the ~80 lines of selection tracking
-//      by hand; delegating to the builder is strictly more correct.
-//
-//  (2) `streamTextContent({ includeMarkedContent:true, disableNormalization:true })`
-//      (pdf_viewer.mjs 6009-6012). The builder streams text with
-//      disableNormalization, which the old getTextContent() defaults did NOT
-//      — a subtle text/spacing divergence that affects CJK hitbox accuracy.
-//
-// setLayerDimensions + --scale-factor: the builder does NOT size its own
-// container or set the scale CSS var (PDFPageView does that). We replicate
-// exactly those two things: set `--scale-factor` = viewport.scale on the
-// page container, and call pdfjs's setLayerDimensions on the builder's div.
-// These feed the span font-size calc (`--text-scale-factor * --font-height`,
-// pdf_viewer.css 915/923) that our old minimal CSS extract was missing
-// entirely — that missing font-size math was the vertical-offset /
-// CJK-width-mismatch root cause.
-import { TextLayerBuilder } from "pdfjs-dist/web/pdf_viewer.mjs";
+import type { PDFDocumentProxy } from "pdfjs-dist";
+import { PDFViewer, PDFLinkService, EventBus } from "pdfjs-dist/web/pdf_viewer.mjs";
 import { configureWorker } from "./pdf-worker";
 import { buildAnchor, pageTextFromItems } from "./highlight";
 
 export const SHIYUE_PDF_VIEW = "shiyue-pdf-view";
 
-// setLayerDimensions sizes a layer div to the viewport via the
-// --total-scale-factor CSS var (see build/pdf.mjs line 1602). Exported as a
-// value from the main entry (pdf.mjs line 26375 / types src/pdf.d.ts).
-const { setLayerDimensions } = pdfjsLib;
-
-interface RenderedPage {
-  canvas: HTMLCanvasElement;
-  task: RenderTask;
-  page: PDFPageProxy;
-  // P1: the builder owns its own `.div` (the textLayer container) and the
-  // `.endOfContent` element + global selection listeners. We hold it so we
-  // can cancel() (which also calls #removeGlobalSelectionListener) on destroy.
-  textLayer: TextLayerBuilder | null;
-}
-
 export class PdfView extends ItemView {
   file: TFile | null = null;
   private readonly plugin: Plugin;
   private doc: PDFDocumentProxy | null = null;
-  private numPages = 0;
-  private renderedPages = new Map<number, RenderedPage>();
-  private observer: IntersectionObserver | null = null;
+  // The pdfjs components. Constructed in setFile, torn down in onClose.
+  // PDFViewer owns the per-page canvas + textLayer + selection machinery; we
+  // only hold the trio so we can clean them up (E3 memory gate).
+  private eventBus: EventBus | null = null;
+  private linkService: PDFLinkService | null = null;
+  private pdfViewer: PDFViewer | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: Plugin) {
     super(leaf);
@@ -77,79 +74,82 @@ export class PdfView extends ItemView {
 
   async onOpen() {
     this.contentEl.empty();
+    this.contentEl.addClass("shiyue-pdf-root");
     this.contentEl.createEl("div", { text: "选择 PDF 后在此显示" });
     // E4: capture selection→anchor on mouseup so the human can verify
-    // text-anchoring works and observe CJK selection quality on v4 (which
-    // lacks the #20334 word-spacing fix). Listener is registered once here
-    // (onOpen runs once per view lifetime); registerDomEvent auto-removes it
-    // on onClose. We do NOT render a persistent highlight — that's MVP work,
-    // not spike. We just log the anchor + the selected string.
+    // text-anchoring works and observe CJK selection quality. Listener is
+    // registered once here (onOpen runs once per view lifetime);
+    // registerDomEvent auto-removes it on onClose. We do NOT render a
+    // persistent highlight — that's MVP work, not spike. We just log the
+    // anchor + the selected string.
     this.registerDomEvent(this.contentEl, "mouseup", () => this.onSelectionEnd());
   }
 
   /** Build + log a text anchor for the current selection. No-op if no
-   *  selection, or if the selection isn't inside a rendered .shiyue-page
-   *  with stored pageText (e.g. user dragged across pages, or page text not
-   *  yet fetched). Errors are caught + logged so selection noise never
-   *  throws into the UI. */
-  private onSelectionEnd() {
+   *  selection, or if the selection isn't inside a rendered .page[data-page-number]
+   *  belonging to PDFViewer. Reads the page's text via the pdfDocument
+   *  (getTextContent is cached by pdfjs) since PDFViewer does not expose the
+   *  builder's joined text publicly. Errors are caught + logged so selection
+   *  noise never throws into the UI. */
+  private async onSelectionEnd() {
     const sel = window.getSelection();
     const selected = sel?.toString().trim() ?? "";
     // Observability: log EVERY non-empty selection so the human can confirm
-    // mouseup + selection detection is firing (independent of whether a
-    // .shiyue-page ancestor + pageText are found). If this never logs, the
-    // text layer spans aren't selectable at all.
+    // mouseup + selection detection is firing. If this never logs, the text
+    // layer spans aren't selectable at all.
     if (selected) {
       console.info("[shiyue] mouseup selection=" + JSON.stringify(selected.slice(0, 60)));
     }
     if (!selected) return;
-    // walk up from the anchor node to the .shiyue-page placeholder.
+    // PDFViewer renders .page[data-page-number] divs; find the ancestor page.
     const node = sel?.anchorNode;
-    const ph = node instanceof Node
+    const pageEl = node instanceof Node
       ? (this.contentEl.contains(node)
-        ? (node.parentElement?.closest(".shiyue-page") as HTMLElement | null)
+        ? (node.parentElement?.closest(".page[data-page-number]") as HTMLElement | null)
         : null)
       : null;
-    if (!ph) return;
-    const pageText = ph.dataset.pageText;
-    if (!pageText) return;
-    const page = Number(ph.dataset.page);
+    if (!pageEl) return;
+    const page = Number(pageEl.dataset.pageNumber);
+    if (!page || !this.doc) return;
     try {
+      const pdfPage = await this.doc.getPage(page);
+      const textContent = await pdfPage.getTextContent();
+      // Joined with '' (no spaces) to match how window.getSelection stringifies
+      // CJK runs (CJK has no word boundaries).
+      const pageText = pageTextFromItems(
+        textContent.items.map((it) => ({ str: (it as { str?: string }).str ?? "" })),
+      );
       const anchor = buildAnchor(selected, pageText, page);
       console.info("[shiyue] anchor", anchor);
       console.info("[shiyue] selected:", selected);
     } catch (err) {
-      // selection string didn't appear verbatim in pageText (common when v4's
-      // CJK offset makes the selection span pickup extra/partial glyphs).
-      // Log so the human can SEE the gap — this is exactly E4's observation.
+      // selection string didn't appear verbatim in pageText (common when CJK
+      // offset makes the selection span pickup extra/partial glyphs). Log so
+      // the human can SEE the gap — this is exactly E4's observation.
       console.info("[shiyue] anchor build failed for selection:", selected, err);
     }
   }
 
   async onClose() {
     // E3: airtight cleanup so memory returns to baseline (Annotator #233
-    // failed here — 5GB never released). Order matters: drop the observer
-    // first so it can't schedule new renders mid-teardown, then destroy every
-    // rendered page (cancels in-flight tasks + frees canvases), then tear down
-    // the doc itself.
-    this.observer?.disconnect();
-    this.observer = null;
-    for (const p of [...this.renderedPages.keys()]) this.destroyPage(p);
+    // failed here — 5GB never released). Order: tear down the viewer (cancels
+    // in-flight renders + clears the DOM), then the doc itself.
+    try { this.pdfViewer?.cleanup(); } catch { /* ignore */ }
+    this.pdfViewer = null;
+    this.linkService = null;
+    this.eventBus = null;
     if (this.doc) {
       await this.doc.cleanup();
       await this.doc.destroy();
       this.doc = null;
     }
-    this.numPages = 0;
   }
 
   async setFile(file: TFile) {
     this.file = file;
-    const el = this.contentEl;
-    el.empty();
-    // scroll container must be the contentEl (tall, scrollable) so the
-    // IntersectionObserver can use it as `root`.
-    el.style.overflowY = "auto";
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("shiyue-pdf-root");
 
     configureWorker(this.app, this.plugin);
     // Read via getResourcePath + fetch (routes through Obsidian's entitled
@@ -157,151 +157,48 @@ export class PdfView extends ItemView {
     const resourcePath = this.app.vault.adapter.getResourcePath(file.path);
     const buf = await (await fetch(resourcePath)).arrayBuffer();
     this.doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
-    this.numPages = this.doc.numPages;
 
-    // one placeholder div per page; rendered on demand by the observer. The
-    // minHeight gives the scrollbar true length before a page is rendered, so
-    // the user can drag into the middle of the doc without the bar jumping.
-    for (let i = 1; i <= this.numPages; i++) {
-      const ph = el.createEl("div", { cls: "shiyue-page" });
-      ph.dataset.page = String(i);
-      ph.style.minHeight = "1000px";
-    }
+    // DOM: container (scrolls, position:absolute — REQUIRED by PDFViewer
+    // constructor line 7711-7712) > viewer (gets .pdfViewer class; pdfjs
+    // appends .page[data-page-number] divs into it). The container fills the
+    // leaf and scrolls internally; PDFViewer does its own virtualization.
+    const container = root.createDiv({ cls: "shiyue-pdf-container" });
+    const viewerEl = container.createDiv({ cls: "pdfViewer" });
 
-    this.setupObserver();
-    // render the first visible page immediately so the user sees something
-    // without scrolling (observer fires async otherwise).
-    void this.renderPage(1);
-  }
+    const eventBus = new EventBus();
+    const linkService = new PDFLinkService({ eventBus });
+    // textLayerMode 1 = TextLayerMode.ENABLE (pdf_viewer.mjs 142-144); default
+    // annotationMode ENABLE_FORMS (2) is fine. l10n omitted → GenericL10n
+    // fallback (safe, see file header). removePageBorders trims the default
+    // 9px transparent border pdfjs draws around each page (cleaner in a leaf).
+    const pdfViewer = new PDFViewer({
+      container,
+      viewer: viewerEl,
+      eventBus,
+      linkService,
+      textLayerMode: 1,
+      removePageBorders: true,
+    });
+    linkService.setViewer(pdfViewer);
 
-  private setupObserver() {
-    this.observer = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          const p = Number((e.target as HTMLElement).dataset.page);
-          if (e.isIntersecting) void this.renderPage(p);
-          else this.destroyPage(p);
-        }
-      },
-      // ±~2 pages of pre-render: rootMargin extends the visible band so pages
-      // just above/below the viewport are rendered before they scroll in.
-      { root: this.contentEl, rootMargin: "2000px 0px" },
-    );
-    this.contentEl
-      .querySelectorAll<HTMLElement>(".shiyue-page")
-      .forEach((d) => this.observer!.observe(d));
-  }
+    this.eventBus = eventBus;
+    this.linkService = linkService;
+    this.pdfViewer = pdfViewer;
 
-  private async renderPage(p: number) {
-    if (this.renderedPages.has(p) || !this.doc) return;
-    const ph = this.contentEl.querySelector<HTMLElement>(
-      `[data-page="${p}"]`,
-    );
-    if (!ph) return;
-    const page = await this.doc.getPage(p);
-    // re-check after the await: the page may have been scrolled away (and
-    // destroyed) while getPage was in flight, or the doc may be gone (onClose).
-    if (!this.doc || this.renderedPages.has(p)) {
-      try { page.cleanup(); } catch { /* ignore */ }
-      return;
-    }
-    // P1 alignment invariant: ONE viewport object, used for BOTH the canvas
-    // render and the text layer. pdfjs positions textLayer spans using this
-    // viewport's transform; the canvas rasterizes glyphs using the same
-    // transform. Identical viewport => spans land on glyphs. (Our old code
-    // also used one viewport, so the invariant held — the alignment bug was
-    // the MISSING span font-size CSS, fixed in styles.css, not here.)
-    const viewport = page.getViewport({ scale: 1.5 });
-    // --scale-factor must equal viewport.scale so the span font-size calc
-    // (styles.css: --text-scale-factor * --font-height) reproduces the glyph
-    // height pdfjs baked into each span's inline --font-height. This mirrors
-    // PDFPageView's standalone path (pdf_viewer.mjs line 6336/6675).
-    ph.style.setProperty("--scale-factor", String(viewport.scale));
+    // Hand the loaded doc to the viewer. This triggers pagesinit → PDFViewer
+    // builds .page placeholders for every page and renders the visible ones via
+    // its own rendering queue. We do nothing else — no observer, no heights.
+    pdfViewer.setDocument(this.doc);
 
-    const canvas = ph.createEl("canvas");
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    canvas.style.width = "100%";
-    const task = page.render({ canvas, viewport });
-    // P1: TextLayerBuilder owns its `.div`; we hold the builder so we can
-    // cancel() on destroy (which also detaches the global selection listener).
-    let textLayer: TextLayerBuilder | null = null;
-    this.renderedPages.set(p, { canvas, task, page, textLayer: null });
-    ph.style.minHeight = ""; // clear placeholder height once real canvas laid out
-    // The canvas render and the TextLayer render are independent failure
-    // modes. Canvas render has its own try (scroll-away cancel tears down the
-    // page as before); the TextLayer path is a SEPARATE try that logs the
-    // error explicitly and KEEPS the canvas so the human still sees the page.
-    try {
-      await task.promise;
-    } catch (err) {
-      // cancelled render (scroll-away) — clean up the partial entry iff it
-      // still points at this task (a re-render may have replaced it).
-      if (this.renderedPages.get(p)?.task === task) this.destroyPage(p);
-      return;
-    }
-    if (!this.doc || !this.renderedPages.has(p)) {
-      try { page.cleanup(); } catch { /* ignore */ }
-      return;
-    }
-    try {
-      // P1: build via TextLayerBuilder. It constructs the textLayer container
-      // (`.div`), streams text with disableNormalization, appends
-      // `.endOfContent`, and binds the global selection listener that bounds
-      // edge selection — all the selection machinery the old hand-rolled
-      // TextLayer lacked.
-      textLayer = new TextLayerBuilder({ pdfPage: page });
-      this.renderedPages.get(p)!.textLayer = textLayer;
-      // Size the textLayer container to the viewport exactly (matches the
-      // canvas backing-store dims, so spans map 1:1 onto glyphs). The builder
-      // does not do this itself — PDFPageView calls setLayerDimensions for it.
-      setLayerDimensions(textLayer.div, viewport);
-      // Place the textLayer over the canvas. The CSS in styles.css scopes the
-      // full pdfjs .textLayer rules under .shiyue-page so they don't clash
-      // with Obsidian's own (Obsidian ships its own .textLayer for its native
-      // PDF view).
-      ph.append(textLayer.div);
-      await textLayer.render({ viewport });
-
-      // Store the page's full text on the placeholder so the mouseup handler
-      // can build an anchor without re-fetching. The builder streams text
-      // internally but does not expose the joined items publicly, so fetch
-      // getTextContent() separately for the anchor string (cheap — pdfjs
-      // caches it). Joined with '' (no spaces) to match how
-      // window.getSelection stringifies CJK runs.
-      const textContent = await page.getTextContent();
-      ph.dataset.pageText = pageTextFromItems(
-        textContent.items.map((it) => ({ str: (it as { str?: string }).str ?? "" })),
-      );
-
-      console.info(
-        "[shiyue] textlayer page", p,
-        "spans", textLayer.div.querySelectorAll("span").length,
-      );
-    } catch (err) {
-      // Do NOT destroy the page — the canvas is already on screen. Log the
-      // TextLayer failure explicitly so the human sees what broke.
-      console.error("[shiyue] textlayer FAILED page", p, err);
-    }
-  }
-
-  private destroyPage(p: number) {
-    const r = this.renderedPages.get(p);
-    if (!r) return;
-    // P1: cancel() detaches the builder's global selection listeners
-    // (#removeGlobalSelectionListener) so they don't accumulate across the
-    // virtual-scroll destroy/render cycle. It does NOT remove the builder's
-    // .div from the DOM — we do that explicitly so a re-render doesn't leave
-    // an orphaned (cancelled) textLayer div inside the placeholder.
-    try { r.textLayer?.cancel(); } catch { /* already done */ }
-    try { r.textLayer?.div.remove(); } catch { /* already gone */ }
-    try { r.task.cancel(); } catch { /* already done */ }
-    // zeroing the canvas backing store is what actually frees the GPU/heap
-    // memory (just removing the element keeps the bitmap alive).
-    r.canvas.width = 0;
-    r.canvas.height = 0;
-    r.canvas.remove();
-    try { r.page.cleanup(); } catch { /* ignore */ }
-    this.renderedPages.delete(p);
+    // Observability: confirm the textLayer rendered for page 1 once the first
+    // page is laid out (pageViewsReady / onePageRendered fire after setDocument).
+    // onePageRendered resolves when the first page has rendered its canvas +
+    // textLayer; we read the span count then to mirror the old
+    // "[shiyue] textlayer page N spans M" log.
+    void pdfViewer.onePageRendered.promise.then(() => {
+      const pv = pdfViewer.getPageView(0);
+      const spans = pv?.textLayer?.div?.querySelectorAll("span").length ?? 0;
+      console.info("[shiyue] textlayer page 1 spans", spans);
+    }).catch(() => { /* view torn down before first render */ });
   }
 }
