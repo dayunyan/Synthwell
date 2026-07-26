@@ -39,6 +39,8 @@
 //    heights — that fights PDFViewer.
 //  - getPageView(index) (7793) returns the PDFPageView; its .textLayer holds the
 //    rendered TextLayerBuilder. .page[data-page-number] divs are in the DOM.
+import "./pdfjs-version-shim"; // MUST be first: re-asserts globalThis.pdfjsLib
+// to 5.4.530 BEFORE pdf_viewer.mjs reads `version` from it at module-load.
 import { ItemView, Plugin, WorkspaceLeaf, TFile } from "obsidian";
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
