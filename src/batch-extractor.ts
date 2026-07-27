@@ -60,6 +60,23 @@ export function dedupe(points: BatchPoint[], threshold = 0.8): BatchPoint[] {
 
 export type ConfirmCostFn = (book: string, chunks: number, tokens: number, cost: number) => Promise<boolean>;
 
+/** 规范化 LLM 返回的单条知识点:补缺省、强转类型、丢弃无标题的残项。
+ *  LLM 输出不可信(tags/related 可能缺失或为 null、source_page 可能是字符串),
+ *  在 extractChunk 边界统一清洗,避免 dedupe 里 `[...p.tags]` 炸 "not iterable"。 */
+function normalizePoint(raw: any, fallbackPage: number): BatchPoint | null {
+  if (!raw || typeof raw !== "object") return null;
+  const title = typeof raw.title === "string" ? raw.title.trim() : "";
+  if (!title) return null;  // 无标题的知识点无意义 → 丢弃
+  const page = Number(raw.source_page);
+  return {
+    title,
+    summary: typeof raw.summary === "string" ? raw.summary.trim() : "",
+    source_page: Number.isFinite(page) ? page : fallbackPage,
+    tags: Array.isArray(raw.tags) ? raw.tags.filter((t: any) => typeof t === "string" && t.trim()) : [],
+    related: Array.isArray(raw.related) ? raw.related.filter((r: any) => typeof r === "string" && r.trim()) : [],
+  };
+}
+
 export interface ExtractOpts { onProgress?: (done: number, total: number, points: number) => void; }
 
 export class BatchExtractor {
@@ -95,8 +112,10 @@ ${priorBlock}
 
 文本:${chunk.text}`;
     const raw = await this.llm.chat([{ role: "user", content: prompt }], { jsonMode: true, temperature: 0.2 });
-    const parsed = parseLLMJson<BatchPoint[]>(raw);
-    return parsed ?? [];
+    const parsed = parseLLMJson<any[]>(raw);
+    if (!Array.isArray(parsed)) return [];
+    const fallbackPage = chunk.pages[0];
+    return parsed.map(p => normalizePoint(p, fallbackPage)).filter(Boolean) as BatchPoint[];
   }
 
   /** 编排:取文本 → 分块 → 预估+确认 → map(顺序前文) → reduce 去重 → 生成笔记 → 状态记录。

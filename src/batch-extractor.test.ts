@@ -75,3 +75,28 @@ test("extractChunk: LLM 返回非 JSON → 返回空数组(不抛)", async () =>
   const pts = await be.extractChunk("b.pdf", { text: "t", pages: [1] }, []);
   assert.equal(pts.length, 0);
 });
+test("extractChunk: LLM 返回的点缺 tags/related 或类型错 → 规范化,不炸 dedupe 的 spread", async () => {
+  // 回归生产 "spread syntax requires ... iterable[Symbol.iterator]" :
+  // LLM 偶尔返回的点不带 tags/related(或为 null、非数组),dedupe 里 [...p.tags] 会炸。
+  const llm: LLMProvider = {
+    async chat() { return JSON.stringify([
+      { title: "点A", summary: "s", source_page: 3 },              // 无 tags/related
+      { title: "点B", summary: "s", source_page: "4" },              // source_page 是字符串
+      { summary: "无标题" },                                         // 无 title → 丢弃
+      { title: "点C", summary: "s", source_page: 5, tags: "不是数组", related: null }, // tags 非数组 / related null
+      null,                                                          // 非对象 → 丢弃
+    ]); },
+    async *stream() { throw 0; }, abort() {},
+  };
+  const be = new BatchExtractor({} as any, llm, {} as any, { notesPath: "x", model: "m" } as any, { inputPer1M: 1, outputPer1M: 2 });
+  const pts = await be.extractChunk("书.pdf", { text: "t", pages: [3, 4] }, []);
+  assert.equal(pts.length, 3);  // 点A、点B、点C(无标题/非对象被丢)
+  assert.deepEqual(pts[0].tags, []);   // 缺 tags 默认 []
+  assert.deepEqual(pts[0].related, []);
+  assert.equal(pts[1].source_page, 4); // "4" → number 4
+  assert.deepEqual(pts[2].tags, []);   // 非数组 tags 默认 []
+  assert.deepEqual(pts[2].related, []); // null related 默认 []
+  // 喂给 dedupe 不炸(回归原报错路径)
+  const { dedupe } = await import("./batch-extractor.ts");
+  assert.equal(dedupe(pts).length, 3);
+});
