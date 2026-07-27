@@ -40,3 +40,26 @@ test("chat jsonMode: 设 response_format json", async () => {
   const out = await p.chat([{ role: "user", content: "x" }], { jsonMode: true });
   assert.equal(out, "[{\"a\":1}]");
 });
+
+test("stream: 逐块 yield content deltas", async () => {
+  // 假 SSE body:两块 data: {...content: "a"} 和 data: {...content: "b"},然后 [DONE]
+  const sse = `data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" } }] })}\n\ndata: ${JSON.stringify({ choices: [{ delta: { content: " world" } }] })}\n\ndata: [DONE]\n\n`;
+  const fakeBody = (async function* () { for (const ch of sse) yield ch; }());
+  const f = async () => ({ ok: true, status: 200, text: async () => "", body: fakeBody }) as any;
+  const p = new OpenAICompatibleProvider({ baseURL: "https://api.deepseek.com", apiKey: "k", model: "m", fetchImpl: f });
+  const out: string[] = [];
+  for await (const chunk of p.stream([{ role: "user", content: "hi" }])) out.push(chunk);
+  assert.equal(out.join(""), "Hello world");
+});
+
+test("abort: 调 controller.abort()(通过 signal 触发)", async () => {
+  let aborted = false;
+  const f = async (_url: string, init: any) => {
+    init.signal?.addEventListener?.("abort", () => { aborted = true; });
+    throw new Error("network");
+  };
+  const p = new OpenAICompatibleProvider({ baseURL: "https://api.deepseek.com", apiKey: "k", model: "m", fetchImpl: f as any });
+  await p.chat([{ role: "user", content: "x" }]).catch(() => {});
+  p.abort();
+  assert.ok(aborted, "abort 应触发 signal");
+});

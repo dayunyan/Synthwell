@@ -36,8 +36,31 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const data = JSON.parse(await res.text());
     return data.choices?.[0]?.message?.content ?? "";
   }
-  async *stream(_messages: ChatMsg[], _o: ChatOpts = {}): AsyncGenerator<string> {
-    throw new Error("stream: Task 4 实现");
+  async *stream(messages: ChatMsg[], o: ChatOpts = {}): AsyncGenerator<string> {
+    this.controller = new AbortController();
+    const body: any = { model: o.model ?? this.model, messages, temperature: o.temperature ?? 0.2, stream: true };
+    if (o.maxTokens) body.max_tokens = o.maxTokens;
+    const res = await this.fetchImpl(`${this.baseURL}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${this.apiKey}` },
+      body: JSON.stringify(body),
+      signal: o.signal ?? this.controller.signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`LLM stream ${res.status}`);
+    let buf = "";
+    for await (const chunk of res.body as any) {
+      buf += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        for (const line of block.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (data === "[DONE]") return;
+          try { yield JSON.parse(data).choices?.[0]?.delta?.content ?? ""; } catch { /* skip malformed */ }
+        }
+      }
+    }
   }
   abort() { this.controller?.abort(); this.controller = null; }
 }
