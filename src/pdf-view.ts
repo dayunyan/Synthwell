@@ -41,7 +41,7 @@
 //    rendered TextLayerBuilder. .page[data-page-number] divs are in the DOM.
 import "./pdfjs-version-shim"; // MUST be first: re-asserts globalThis.pdfjsLib
 // to 5.4.530 BEFORE pdf_viewer.mjs reads `version` from it at module-load.
-import { ItemView, Plugin, WorkspaceLeaf, TFile } from "obsidian";
+import { FileView, Plugin, WorkspaceLeaf, TFile, Menu } from "obsidian";
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { PDFViewer, PDFLinkService, EventBus } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -56,8 +56,8 @@ import { buildAnchor, pageTextFromItems } from "./highlight";
 
 export const SHIYUE_PDF_VIEW = "shiyue-pdf-view";
 
-export class PdfView extends ItemView {
-  file: TFile | null = null;
+export class PdfView extends FileView {
+  // file: TFile | null — 由 FileView 提供(Plan 3 Task 6:不再自定义)
   private readonly plugin: Plugin;
   private doc: PDFDocumentProxy | null = null;
   // The pdfjs components. Constructed in setFile, torn down in onClose.
@@ -93,6 +93,8 @@ export class PdfView extends ItemView {
   // eats the zoom — page stays "fills window" regardless of currentScale).
   // Reset to false in setFile so each newly-opened PDF auto-fits on open.
   private userZoomed = false;
+  // Plan 3: 最近一次选区(mouseup 缓存)。SelectionExtractor 的主输入。
+  private lastSelection: { text: string; page: number } | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: Plugin) {
     super(leaf);
@@ -106,6 +108,10 @@ export class PdfView extends ItemView {
   getDisplayText(): string {
     return this.file?.basename ?? "拾阅 PDF";
   }
+  /** 最近一次选区(文本 + 页码);无则 null。SelectionExtractor 的主输入。 */
+  getSelection(): { text: string; page: number } | null { return this.lastSelection; }
+  /** 已加载的 PDF 文档(取上下文 ±2 页文本用;复用,免重新 fetch)。未加载则 null。 */
+  getDocument(): PDFDocumentProxy | null { return this.doc; }
 
   async onOpen() {
     this.contentEl.empty();
@@ -118,6 +124,16 @@ export class PdfView extends ItemView {
     // persistent highlight — that's MVP work, not spike. We just log the
     // anchor + the selected string.
     this.registerDomEvent(this.contentEl, "mouseup", () => this.onSelectionEnd());
+    // Plan 3 Task 5: 选区右键 → 「深抽这个知识点」。无选区时用 Obsidian 默认菜单。
+    this.registerDomEvent(this.contentEl, "contextmenu", (e: MouseEvent) => {
+      if (!this.lastSelection) return;
+      e.preventDefault();
+      const menu = new Menu();
+      menu.addItem(item => item.setTitle("深抽这个知识点").setIcon("sparkles")
+        .onClick(() => (this.plugin as { extractSelection?: (v: PdfView) => void }).extractSelection?.(this)));
+      menu.showAtMouseEvent(e);
+    });
+    if (this.file) await this.setFile(this.file);  // Plan 3 Task 6: FileView 路由后 onOpen 加载文件
   }
 
   /** Build + log a text anchor for the current selection. No-op if no
@@ -146,6 +162,7 @@ export class PdfView extends ItemView {
     if (!pageEl) return;
     const page = Number(pageEl.dataset.pageNumber);
     if (!page || !this.doc) return;
+    this.lastSelection = { text: selected, page };  // Plan 3: 缓存供 SelectionExtractor
     try {
       const pdfPage = await this.doc.getPage(page);
       const textContent = await pdfPage.getTextContent();
@@ -194,11 +211,13 @@ export class PdfView extends ItemView {
       await this.doc.destroy();
       this.doc = null;
     }
+    this.lastSelection = null;
   }
 
   async setFile(file: TFile) {
     this.file = file;
     this.userZoomed = false; // each newly-opened PDF auto-fits on open
+    if (this.doc) { try { await this.doc.destroy(); } catch { /* ignore */ } this.doc = null; }  // 重入:换文件先清旧 doc
     const root = this.contentEl;
     root.empty();
     root.addClass("shiyue-pdf-root");
