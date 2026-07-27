@@ -216,16 +216,53 @@ export class PdfView extends ItemView {
     this.linkService = linkService;
     this.pdfViewer = pdfViewer;
 
+    // Hand the loaded doc to BOTH the viewer AND the linkService. The canonical
+    // pdfjs setup (PDFViewerApplication.open / web/app.mjs) calls, in order:
+    //   pdfLinkService.setViewer(pdfViewer)
+    //   pdfViewer.setDocument(pdfDocument)
+    //   pdfLinkService.setDocument(pdfDocument, baseUrl)   ← we were MISSING this
+    // Without setDocument, linkService.pdfDocument stays null. The annotation
+    // layer (AnnotationLayerBuilder → AnnotationLayer → LinkAnnotationElement)
+    // is handed our PDFLinkService via PDFViewer._layerProperties.linkService
+    // (pdf_viewer.mjs 7933-7963, 8205). During page draw, LinkAnnotationElement
+    // .render / _bindLink call linkService.addLinkAttributes /
+    // getDestinationHash (build/pdf.mjs 17313, 17351). Those methods themselves
+    // only touch baseUrl/externalLink* (set in the constructor), but the
+    // half-initialized linkService leaves the annotation render pipeline in a
+    // state where downstream calls (e.g. executeNamedAction / goToDestination,
+    // which guard on pdfDocument) misbehave, and the cascade aborts the page
+    // draw pipeline BEFORE the textLayer finishes rendering its spans →
+    // "[shiyue] textlayer page 1 spans 0" → no selectable text. setDocument
+    // completes linkService init so the annotation layer renders cleanly and
+    // the page draw pipeline completes → textLayer spans populate.
+    // Signature (pdf_viewer.mjs 1480): setDocument(pdfDocument, baseUrl = null).
+    linkService.setDocument(this.doc);
+
     // Hand the loaded doc to the viewer. This triggers pagesinit → PDFViewer
     // builds .page placeholders for every page and renders the visible ones via
     // its own rendering queue. We do nothing else — no observer, no heights.
     pdfViewer.setDocument(this.doc);
 
-    // Observability: confirm the textLayer rendered for page 1 once the first
-    // page is laid out (pageViewsReady / onePageRendered fire after setDocument).
-    // onePageRendered resolves when the first page has rendered its canvas +
-    // textLayer; we read the span count then to mirror the old
-    // "[shiyue] textlayer page N spans M" log.
+    // Auto-fit: open at page-width (best for reading CJK + EN). currentScaleValue
+    // (pdf_viewer.mjs setter) accepts "auto"|"page-fit"|"page-actual"|"page-width"
+    // |numeric. Set AFTER setDocument so numPages is known; the value is applied
+    // on the next layout pass (pagesinit / first page render). "page-width" fits
+    // the page width to the container's content width — the standard reader default.
+    pdfViewer.currentScaleValue = "page-width";
+
+    // Observability: log the textLayer span count on the textlayerrendered event,
+    // which pdfjs dispatches per page AFTER the textLayer finishes rendering its
+    // spans (canvas renders first, then text content loads async, THEN
+    // textlayerrendered fires). onePageRendered fires earlier (canvas laid out)
+    // and may log spans 0 because the text content hasn't loaded yet — so we hook
+    // textlayerrendered for the authoritative count. Keep onePageRendered too
+    // (harmless, mirrors the old log). evt.source is the textLayer (TextLayer);
+    // evt.pageNumber is 1-based.
+    eventBus.on("textlayerrendered", (evt: { pageNumber: number }) => {
+      const pv = pdfViewer.getPageView(evt.pageNumber - 1);
+      const spans = pv?.textLayer?.div?.querySelectorAll("span").length ?? 0;
+      console.info("[shiyue] textlayer page", evt.pageNumber, "spans", spans);
+    });
     // onePageRendered is a v5 GETTER (pdf_viewer.mjs 7927-7928) returning
     // _onePageRenderedCapability.promise (a bare Promise) or null — NOT a
     // {promise} deferred. Using .promise on it yielded undefined→.then threw.
@@ -235,8 +272,25 @@ export class PdfView extends ItemView {
       onePageRendered.then(() => {
         const pv = pdfViewer.getPageView(0);
         const spans = pv?.textLayer?.div?.querySelectorAll("span").length ?? 0;
-        console.info("[shiyue] textlayer page 1 spans", spans);
+        console.info("[shiyue] textlayer page 1 spans (onePageRendered)", spans);
       }).catch(() => { /* view torn down before first render */ });
     }
+
+    // Zoom: pdfjs v5.4.530's shipped library (web/pdf_viewer.mjs) does NOT bind
+    // Ctrl/Cmd+wheel or pinch-to-zoom — grep for "wheel"/"gesture"/"touchmove"
+    // in pdf_viewer.mjs returns nothing. Those handlers live in the full web
+    // app (web/app.mjs / grab_to_pan.js), which the npm package does NOT ship.
+    // So zoom was never wired by pdfjs; we bind it ourselves on the container.
+    // Ctrl/Cmd+wheel → bump currentScale; pinch is left to the host (Obsidian
+    // webview) since gesture events aren't in the shipped library either.
+    // Clamp to pdfjs's supported range (0.25–4). passive:false so we can
+    // preventDefault and stop the page from scrolling while zooming.
+    container.addEventListener("wheel", (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const next = pdfViewer.currentScale + delta;
+      pdfViewer.currentScale = Math.max(0.25, Math.min(4, next));
+    }, { passive: false });
   }
 }
