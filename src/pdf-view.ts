@@ -169,6 +169,11 @@ export class PdfView extends ItemView {
 
     const eventBus = new EventBus();
     const linkService = new PDFLinkService({ eventBus });
+    // Belt-and-suspenders: re-assert our 5.4.530 global immediately before
+    // PDFViewer construction, in case any pdfjs code reads the version
+    // dynamically at construction time (the build-time onLoad patch is the
+    // definitive neutralize; this covers any other dynamic reads).
+    ;(globalThis as any).pdfjsLib = pdfjsLib;
     // textLayerMode 1 = TextLayerMode.ENABLE (pdf_viewer.mjs 142-144); default
     // annotationMode ENABLE_FORMS (2) is fine. l10n omitted → GenericL10n
     // fallback (safe, see file header). removePageBorders trims the default
