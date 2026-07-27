@@ -61,9 +61,34 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-5 组件 + Settings。复用 spike 的 PDF reader(`src/pdf-view.ts`,PDFViewer embed)作为基础设施——批处理从它拿 PDFDocumentProxy,选区即抽从它拿当前选区。
+5 组件 + Settings。**模块化**:extractor/RAG **不绑定** PDFViewer embed,依赖 `DocumentSource` 接口——换 Obsidian 自带预览器、或将来加 EPUB,只改接口实现,不动 extractor/RAG。
+
+```typescript
+/** 任何可被抽取的文档源都实现此接口。当前:PDF reader(PDFViewer embed)。
+ *  未来可加:Obsidian 自带 PDF 预览器、EPUB reader。 */
+interface DocumentSource {
+  getFile(): TFile;                                      // 源文件(批处理/RAG 只需这个,不依赖 viewer)
+  getDocument(): Promise<PDFDocumentProxy>;              // 加载 pdf 文档(批处理取文本用);非 PDF 源可返回 null
+  getSelection(): { text: string; page: number } | null; // 当前选区(选区即抽用);无选区能力的源返回 null
+}
+```
+
+- **批处理 + RAG** 只需 `getFile()`(+自己 `getDocument()` 取文本),**完全不依赖 viewer**——PDF 在 Obsidian 自带预览器里打开也能抽。
+- **选区即抽** 需 `getSelection()`,即需一个能暴露选区的源(我们的 PDF reader 能;Obsidian 自带预览器选区能力有限,降级时只能走批处理)。
+- spike 的 `src/pdf-view.ts` 实现 `DocumentSource`;extractor 注入 `DocumentSource`,不直接 import PdfView。
 
 ---
+
+## 1.1 UX 入口(替换命令面板,Phase 1 必做)
+
+E6 三位用户一致痛批「命令面板打开 PDF」反人类。Phase 1 必须改(#6):
+
+- **双击 PDF → 用拾阅打开**:注册 `.pdf` 扩展名到拾阅 view(`registerExtensions(['pdf'], viewType)`)→ vault 文件列表双击 PDF 直接在拾阅 view 打开(像 Obsidian 原生打开 markdown 一样自然)。**推翻 V1.5 D8「不注册 .pdf」**——3/3 用户要,冲突风险(覆盖默认查看器)可接受;用户想用自带查看器可禁用拾阅或加 setting 切换。
+- **当前编辑区新 tab 打开**(不是新 split):`getLeaf(true)`/`getLeaf('tab')`,不挤布局。
+- **视图内工具栏**:PDF 视图顶部加工具栏(页码、缩放按钮、「抽取整篇知识点」按钮、暗色切换)——不是命令面板。spike 的 wheel 缩放 + autofit 保留。
+- **右键菜单 + 选中浮工具栏**:选中文本后右键「深抽这个知识点」+ 浮起迷你工具栏(复制/深抽/问 AI)。
+
+注:P4(双击打开 + tab)原在 spike 后置清单,现**提前到 Phase 1**(E6 一致要求 + #6)。
 
 ## 2. 数据层
 
@@ -80,9 +105,9 @@
 synthwell_type: knowledge_point
 source_pdf: "[[书名.pdf]]"        # 双向链接到源 PDF(图谱连线)
 source_page: 42                   # 抽自的页(批处理)/ 选中所在页(选区)
-source_text: "原文片段…"          # 溯源用(截断 ~500 字)
+source_text: "原文片段…"          # 溯源/预览用,截断 ~200 字
 extracted_at: 2026-07-27
-model: deepseek-chat
+model: deepseek-v4-flash
 extraction_mode: batch | selection
 tags:                             # AI 给的主题标签 → 图谱聚类
   - 飞轮效应
@@ -96,7 +121,7 @@ related:                          # AI 推断的关联知识点 → [[backlink]]
 {AI 生成的摘要,2-4 句,不含来源标记}
 
 ## 原文
-> {source_text}(可截断)
+> {完整原文}(不截断,完整保留抽取/选中段)
 
 ## 关联
 - [[网络效应]] — {AI 一句话说明为何关联}
@@ -123,10 +148,11 @@ interface LLMProvider {
 interface ChatOpts { model?: string; temperature?: number; maxTokens?: number; signal?: AbortSignal; jsonMode?: boolean; }
 ```
 
-实现:
-- `OpenAICompatibleProvider`(baseURL + apiKey + model)——覆盖 OpenAI / DeepSeek(DeepSeek baseURL = `https://api.deepseek.com`,OpenAI 兼容)
-- `OllamaProvider`(本地,`http://localhost:11434`,无 key)
-- Settings 选 provider + 粘 key + 连接测试 + 选 model(下拉常见 + 自定义)+ base URL(自定义)
+实现(Phase 1 砍 Ollama,专注云端文本模型,纯文本处理):
+- `OpenAICompatibleProvider`(baseURL + apiKey + model)——覆盖 OpenAI / DeepSeek(DeepSeek baseURL = `https://api.deepseek.com`,OpenAI 兼容协议)
+- Settings 选 provider + 粘 key + 连接测试 + 选 model
+- **默认 provider = DeepSeek,默认模型 = `deepseek-v4-flash`**(纯文本、高性价比)——实现期核对 DeepSeek API 真实模型 ID,以 API 文档为准
+- 砍 Ollama 本地配置(Phase 1 不做;后续要本地再加)
 
 **API Key 存储**:用 `app.secretStorage`(spec D5,`@since 1.11.4`),跨平台 per-vault。**不用** safeStorage+明文 fallback(spike D5)。
 
@@ -138,25 +164,30 @@ interface ChatOpts { model?: string; temperature?: number; maxTokens?: number; s
 
 ## 4. 批量抽取器(BatchExtractor)
 
-**触发**:PDF reader 打开 PDF 时,命令面板「拾阅: 抽取整篇知识点」。
+**触发**:在 PDF 视图顶部工具栏的「抽取整篇知识点」按钮(主交互;命令面板 + 快捷键作为辅助入口,但不是主推)。**抽取前弹窗确认预估花费**(见下 token/成本)。
 
 **pipeline**:
 1. **取文本**:遍历 `pdfDocument.numPages`,`page.getTextContent()` → 拼每页文本(`items.map(i=>i.str).join("")`),记录每页文本 + 页码。复用 spike 的 `pageTextFromItems`。
 2. **分块**:按 token 预算分块(默认 3000 tokens/块,重叠 200 tokens)。token 估算 ≈ 字符数/2(中英混合粗估)。块 = 连续页(不跨页切,便于 source_page 准确)。
-3. **map**:每块 → AI prompt(JSON mode):
+3. **map**(顺序,带前文上下文):每块 → AI prompt(JSON mode)。**顺序注入此前已生成知识点的 schema + 摘要(不含完整原文,控 token)**,让 AI 能引用/链接前面的点(避免重复抽 + 形成关联):
    ```
    你是知识抽取助手。从下面这段 PDF 文本(来自《{书名}》第{页}-{页}页)提取离散知识点。
-   每个知识点给:title(简短标题,名词短语)、summary(2-4 句摘要)、source_page(所在页码)、tags(2-3 个主题标签)。
-   只返回 JSON 数组,不要其他文字:[{"title","summary","source_page","tags"}]
-   
+   每个知识点给:title(简短标题,名词短语)、summary(2-4 句摘要)、source_page(所在页码)、tags(2-3 个主题标签)、related(与本块或前文知识点中相关的标题列表)。
+   只返回 JSON 数组,不要其他文字:[{"title","summary","source_page","tags","related"}]
+
+   【此前已抽取的知识点(只看 schema+摘要,别复述原文)】:
+   - {title1} — {summary1}
+   - {title2} — {summary2}
+   ...(限前 ~30 个,超了截断)
+
    文本:{chunk}
    ```
    解析 JSON(robust:去 code fence、失败重试一次「只返回 JSON」、再失败跳过该块 + 日志)。
-4. **reduce**:合并所有块的知识点 → 去重(标题完全相同 / Jaccard 相似度 >0.8 合并摘要)→ 跨点关联推断:再给 AI 一次「给定这 N 个知识点标题,列出哪些相互关联(给 backlink)」。输出最终知识点列表 + 关联。
+4. **reduce**:合并所有块的知识点 → 去重(标题完全相同 / Jaccard 相似度 >0.8 合并摘要,保留更全的 summary + 合并 related/tags)。**跨点关联已在 map 阶段顺序建立**(每块看到前文点 + 给 related),reduce 不再额外 AI 调用。
 5. **生成笔记**:每个知识点 → NoteGenerator → 写文件。进度条(Notice/Progress):「抽取中 块 3/8 → 知识点 17」。可 AbortController 中断。
 6. **状态**:`.shiyue/extraction-state.json` 记 `{pdf_hash: {extracted_at, point_titles: [...], model}}` → 重复抽取时提示「已抽过 N 个知识点,重新抽 / 增量」。
 
-**token/成本**:大 PDF(800 页)→ 几十块 → 几十次 AI 调用。预估器先算总 token 给用户确认再跑。可设上限(如「单次最多 20 块,超了提示分批」)。
+**token/成本(不硬控,抽取前弹窗确认)**:大 PDF(800 页)→ 几十块 → 几十次 AI 调用。抽取前预估总 token + 费用,弹窗「《书名》约 N tokens / N 块,预计 ¥X,继续?」,用户确认才跑。**不设硬上限**——用户自己决定要不要为长文档付费。
 
 **错误**:AI 失败(网络/key/超时)→ Notice 友好提示 + 中断 + 已生成笔记保留。JSON 解析失败 → 重试 + 跳过。
 
@@ -164,7 +195,7 @@ interface ChatOpts { model?: string; temperature?: number; maxTokens?: number; s
 
 ## 5. 选区抽取器(SelectionExtractor)
 
-**触发**:PDF reader 里选中文本后,命令「拾阅: 深抽这个知识点」(或右键菜单)。
+**触发**:PDF 视图里选中文本后,**右键菜单「深抽这个知识点」** + 选中后浮起的迷你工具栏按钮(主交互;命令面板作辅助)。
 
 **输入**:
 - `selected`:选中文字
@@ -256,12 +287,16 @@ interface ChatOpts { model?: string; temperature?: number; maxTokens?: number; s
 
 | # | 项 | 何时定 |
 |---|---|---|
-| D1 | 批处理默认 token/块(3000)、重叠(200)、块数上限(20) | 实现期微调,先按默认 |
+| D1 | 批处理默认 token/块(3000)、重叠(200);**不设硬上限,抽取前弹窗预估花费确认** | 实现期微调 |
 | D2 | Jaccard 去重阈值(0.8) | 实现期调 |
 | D3 | 向量语义检索 | Phase 1.5(验证 RAG 真有人用后) |
 | D4 | 图谱可视化(搜索定位+高亮、问题→链路高亮) | Phase 2(先测 Obsidian 图谱自由度) |
 | D5 | annotation 渲染层重新启用(linkService 接 _layerProperties) | MVP |
 | D6 | 英文选区偏移修复 | MVP |
+| D7 | Ollama 本地 provider(Phase 1 砍了) | Phase 1 后,若要本地再加 |
+| D8(已决)| 注册 `.pdf` 扩展名双击打开(推翻 V1.5 原 D8「不注册」) | Phase 1 必做 |
+| D9(已决)| 默认模型 `deepseek-v4-flash`(纯文本;实现期核对真实 ID) | Phase 1 |
+| D10(已决)| 模块化 `DocumentSource` 接口,extractor 不绑 PDFViewer | Phase 1 必做 |
 
 ---
 
@@ -273,13 +308,16 @@ interface ChatOpts { model?: string; temperature?: number; maxTokens?: number; s
 - `src/highlight.ts`(`buildAnchor`/`pageTextFromItems`)→ SelectionExtractor 复用 pageTextFromItems 拼 page 文本
 
 新增(spike 之上):
-- `src/llm-service.ts`(LLMProvider 接口 + 3 实现)
+- `src/document-source.ts`(`DocumentSource` 接口 + PDF reader 实现)
+- `src/llm-service.ts`(`LLMProvider` 接口 + OpenAI-compatible 实现,覆盖 DeepSeek;默认 deepseek-v4-flash)
 - `src/batch-extractor.ts`
 - `src/selection-extractor.ts`
 - `src/note-generator.ts`
 - `src/knowledge-panel.ts`(RAG view)
 - `src/settings.ts`(Settings tab + SecretStorage + 费用预估)
-- 修改 `src/main.ts`(注册命令 + view + settings tab)
+- `src/pdf-toolbar.ts`(视图内工具栏:页码/缩放/抽取按钮/暗色)+ 右键菜单 + 选中浮工具栏
+- 修改 `src/main.ts`(`registerExtensions(['pdf'])` + view + settings tab + 命令)
+- 修改 `src/pdf-view.ts`(实现 `DocumentSource` + `getLeaf` tab 打开 + 工具栏挂载)
 
 ---
 
