@@ -19,7 +19,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
   constructor(opts: { baseURL: string; apiKey: string; model: string; fetchImpl?: FetchLike }) {
     this.baseURL = opts.baseURL.replace(/\/$/, "");
     this.apiKey = opts.apiKey; this.model = opts.model;
-    this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch as FetchLike);
+    // Bind to globalThis — storing globalThis.fetch as a bare ref detaches it from
+    // window, causing "Illegal invocation" at call time. .bind keeps the window ctx.
+    // (Tests inject fetchImpl so this default only matters in production.)
+    this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch.bind(globalThis) as FetchLike);
   }
   async chat(messages: ChatMsg[], o: ChatOpts = {}): Promise<string> {
     this.controller = new AbortController();
