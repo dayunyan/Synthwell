@@ -17,8 +17,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private baseURL: string; private apiKey: string; private model: string;
   private fetchImpl: FetchLike; private controller: AbortController | null = null;
   constructor(opts: { baseURL: string; apiKey: string; model: string; fetchImpl?: FetchLike }) {
-    this.baseURL = opts.baseURL.replace(/\/$/, "");
-    this.apiKey = opts.apiKey; this.model = opts.model;
+    // trim: 粘贴的 key/URL/model 常带尾随空白/换行 → Bearer 头或 URL 畸形 → 401。
+    // 防御性 trim(也清理修复前已存入 SecretStorage 的脏 key,用户无需重粘)。
+    this.baseURL = opts.baseURL.trim().replace(/\/$/, "");
+    this.apiKey = opts.apiKey.trim(); this.model = opts.model.trim();
     // Bind to globalThis — storing globalThis.fetch as a bare ref detaches it from
     // window, causing "Illegal invocation" at call time. .bind keeps the window ctx.
     // (Tests inject fetchImpl so this default only matters in production.)

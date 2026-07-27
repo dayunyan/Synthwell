@@ -34,12 +34,12 @@ export class ShiyueSettingTab extends PluginSettingTab {
       // 回填:从 secretStorage 读现有 key(SecretStorage @since 1.11.4,getSecret 同步)
       const existing = this.app.secretStorage.getSecret(SHIYUE_API_KEY_ID);
       if (existing) t.setValue(existing);
-      t.onChange(async v => { this.app.secretStorage.setSecret(SHIYUE_API_KEY_ID, v); });
+      t.onChange(async v => { this.app.secretStorage.setSecret(SHIYUE_API_KEY_ID, v.trim()); });
     });
 
-    new Setting(containerEl).setName("模型").setDesc("默认 deepseek-v4-flash(纯文本)").addText(t => t.setValue(this.plugin.settings.model).onChange(async v => { this.plugin.settings.model = v; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("模型").setDesc("默认 deepseek-v4-flash(纯文本)").addText(t => t.setValue(this.plugin.settings.model).onChange(async v => { this.plugin.settings.model = v.trim(); await this.plugin.saveSettings(); }));
 
-    new Setting(containerEl).setName("Base URL").addText(t => t.setValue(this.plugin.settings.baseURL).onChange(async v => { this.plugin.settings.baseURL = v; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("Base URL").addText(t => t.setValue(this.plugin.settings.baseURL).onChange(async v => { this.plugin.settings.baseURL = v.trim(); await this.plugin.saveSettings(); }));
 
     new Setting(containerEl).setName("连接测试").setDesc("发一次最小请求,验证 key/模型可用").addButton(b => b.setButtonText("测试连接").onClick(async () => {
       try {
