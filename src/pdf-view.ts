@@ -45,6 +45,12 @@ import { ItemView, Plugin, WorkspaceLeaf, TFile } from "obsidian";
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { PDFViewer, PDFLinkService, EventBus } from "pdfjs-dist/web/pdf_viewer.mjs";
+// AnnotationEditorType: enum from the pdfjs API build (types/src/shared/util.d.ts
+// `export namespace AnnotationEditorType`). Values: DISABLE=-1, NONE=0, ... (see
+// build/pdf.mjs line 75-82). We only need DISABLE to opt out of annotation
+// EDITING — we do NOT edit PDF annotations (highlights live in Obsidian via
+// text-anchoring). See the setDocument note on pdf-view.ts line ~181.
+import { AnnotationEditorType } from "pdfjs-dist";
 import { configureWorker } from "./pdf-worker";
 import { buildAnchor, pageTextFromItems } from "./highlight";
 
@@ -184,6 +190,24 @@ export class PdfView extends ItemView {
       eventBus,
       linkService,
       textLayerMode: 1,
+      // DISABLE annotation EDITING (AnnotationEditorType.DISABLE = -1). This is
+      // the fix for the `AnnotationEditorUIManager` null-_on crash: in v5
+      // pdf_viewer.mjs setDocument (line 8155), the manager is constructed iff
+      // `annotationEditorMode !== AnnotationEditorType.DISABLE`. The option
+      // defaults to NONE=0 (line 7729: `options.annotationEditorMode ??
+      // AnnotationEditorType.NONE`), and 0 !== -1 so the manager IS built. The
+      // manager constructor (build/pdf.mjs line 2734) then calls
+      // `eventBus._on(...)` (line 2744) on the eventBus arg. PDFViewer threads
+      // our `this.eventBus` into the constructor (line 8160), so the eventBus
+      // SHOULD be non-null — but in the bundled/minified runtime under Obsidian
+      // the manager's eventBus arrives null, throwing `Cannot read properties
+      // of null (reading '_on')`. We don't edit PDF annotations (highlights
+      // live in Obsidian via text-anchoring), so the clean fix is to opt out of
+      // the editor entirely: DISABLE makes the `if` at 8155 false, the manager
+      // is never constructed, and the null-eventBus path is unreachable.
+      // annotationMode (rendering EXISTING PDF annotations) is left at its
+      // default ENABLE_FORMS=2 (line 7728) so PDF highlights/etc. still render.
+      annotationEditorMode: AnnotationEditorType.DISABLE,
       removePageBorders: true,
     });
     linkService.setViewer(pdfViewer);
