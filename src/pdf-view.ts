@@ -88,6 +88,11 @@ export class PdfView extends ItemView {
   // can clear the pending timer.
   private zoomTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingZoomDelta = 0;
+  // Once the user zooms manually, stop auto-fitting to page-width (otherwise the
+  // ResizeObserver re-fits on every zoom-induced scrollbar/width change and
+  // eats the zoom — page stays "fills window" regardless of currentScale).
+  // Reset to false in setFile so each newly-opened PDF auto-fits on open.
+  private userZoomed = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: Plugin) {
     super(leaf);
@@ -193,6 +198,7 @@ export class PdfView extends ItemView {
 
   async setFile(file: TFile) {
     this.file = file;
+    this.userZoomed = false; // each newly-opened PDF auto-fits on open
     const root = this.contentEl;
     root.empty();
     root.addClass("shiyue-pdf-root");
@@ -333,6 +339,7 @@ export class PdfView extends ItemView {
     this.resizeObserver = new ResizeObserver(() => {
       const width = container.clientWidth;
       if (width === 0) return; // view torn down / hidden
+      if (this.userZoomed) return; // user zoomed manually — don't auto-refit
       if (Math.abs(width - this.lastContainerWidth) <= 1) return; // no real change
       this.lastContainerWidth = width;
       if (this.resizeTimer) clearTimeout(this.resizeTimer);
@@ -407,7 +414,12 @@ export class PdfView extends ItemView {
           Math.min(4, this.pdfViewer.currentScale + this.pendingZoomDelta),
         );
         this.pendingZoomDelta = 0;
-        this.pdfViewer.currentScale = next;
+        // Switch to a fixed numeric scale (clears the "page-width" special mode)
+        // + mark userZoomed so the ResizeObserver stops auto-refitting — otherwise
+        // the RO re-fits to window width on every zoom-induced scrollbar change
+        // and eats the zoom (display stays "fills window", only sharpness changes).
+        this.pdfViewer.currentScaleValue = String(next);
+        this.userZoomed = true;
       }, 150);
     }, { passive: false });
   }
