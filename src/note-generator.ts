@@ -7,6 +7,7 @@ export interface KnowledgePoint {
   source_text: string;
   tags: string[];
   related: string[];
+  related_reasons?: { title: string; reason: string }[];  // 选区抽给的理由(body 用;批处理无)
   model: string;
   extraction_mode: "batch" | "selection";
 }
@@ -34,7 +35,14 @@ export function renderNote(p: KnowledgePoint, extractedAt: string): string {
   lines.push("related:");
   if (p.related.length) p.related.forEach(r => lines.push(`  - "[[${r}]]"`)); else lines.push("  []");
   lines.push("---", "", `# ${p.title}`, "", p.summary, "", "## 原文", `> ${p.source_text}`);
-  if (p.related.length) { lines.push("", "## 关联"); p.related.forEach(r => lines.push(`- [[${r}]]`)); }
+  if (p.related.length) {
+    lines.push("", "## 关联");
+    if (p.related_reasons && p.related_reasons.length) {
+      p.related_reasons.forEach(rr => lines.push(`- [[${rr.title}]]${rr.reason ? ` — ${rr.reason}` : ""}`));
+    } else {
+      p.related.forEach(r => lines.push(`- [[${r}]]`));
+    }
+  }
   lines.push("");
   return lines.join("\n");
 }

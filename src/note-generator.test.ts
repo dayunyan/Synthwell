@@ -86,3 +86,22 @@ test("NoteGenerator.generate: 嵌套文件夹逐级 mkdir(真实 adapter.mkdir �
   // 三级目录都不存在 → 逐级 mkdir
   assert.deepEqual(mkdirs, ["拾阅笔记", "拾阅笔记/知识点", "拾阅笔记/知识点/书.pdf"]);
 });
+
+test("renderNote: 有 related_reasons → ## 关联 显示 [[title]] — reason", () => {
+  const md = renderNote({
+    title: "飞轮", summary: "s", source_pdf: "b.pdf", source_page: 3, source_text: "原文",
+    tags: [], related: ["网络效应"], related_reasons: [{ title: "网络效应", reason: "都讲平台价值" }],
+    model: "m", extraction_mode: "selection",
+  }, "2026-07-27");
+  assert.ok(md.includes("- [[网络效应]] — 都讲平台价值"));
+  assert.ok(md.includes('  - "[[网络效应]]"'));  // frontmatter backlink 仍在
+});
+
+test("renderNote: 无 related_reasons(批处理)→ ## 关联 纯 backlink,向后兼容", () => {
+  const md = renderNote({
+    title: "飞轮", summary: "s", source_pdf: "b.pdf", source_page: 3, source_text: "原文",
+    tags: [], related: ["网络效应", "好战略坏战略"], model: "m", extraction_mode: "batch",
+  }, "2026-07-27");
+  assert.ok(md.includes("- [[网络效应]]"));
+  assert.ok(!md.includes("- [[网络效应]] — "));  // 无 reason 后缀
+});
