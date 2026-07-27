@@ -37,3 +37,19 @@ test("renderNote: frontmatter source_text 截断 ~200,body 原文完整", () => 
   assert.ok(fmMatch && fmMatch[1].length <= 203);
   assert.ok(md.includes(`> ${full}`));
 });
+
+test("NoteGenerator.generate: 标题冲突 → -2/-3; 文件夹不存在则创建", async () => {
+  const created: string[] = [];
+  const exists = (async (path: string) => path.endsWith("/飞轮效应.md")) as any;
+  const adapter = {
+    exists, async read() { return ""; }, async write(path: string, content: string) { created.push(path); },
+  } as any;
+  const { NoteGenerator } = await import("./note-generator.ts");
+  const gen = new NoteGenerator(adapter as any, { notesPath: "拾阅笔记/知识点", model: "deepseek-v4-flash" });
+  const p = { title: "飞轮效应", summary: "s", source_pdf: "书.pdf", source_page: 1, source_text: "原文", tags: ["飞轮"], related: [], model: "deepseek-v4-flash", extraction_mode: "batch" as const };
+  await gen.generate(p);
+  adapter.exists = (async (path: string) => path.endsWith("/飞轮效应.md") || path.endsWith("/飞轮效应 - 2.md")) as any;
+  await gen.generate(p);
+  assert.ok(created.length >= 2);
+  assert.ok(created.some(p => p.includes("飞轮效应 - 2")) || created.some(p => p.includes("飞轮效应 - 3")));
+});

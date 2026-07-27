@@ -34,3 +34,37 @@ export function renderNote(p: KnowledgePoint, extractedAt: string): string {
   lines.push("");
   return lines.join("\n");
 }
+
+export interface NoteGeneratorOpts { notesPath: string; model: string; }
+
+/** 纯逻辑 normalizePath 替代(不 import obsidian,避免 node:test ERR_MODULE_NOT_FOUND)。 */
+function np(p: string): string { return p.split("/").map(s => s.trim()).filter(Boolean).join("/"); }
+
+export interface NoteAdapter {
+  exists(path: string): Promise<boolean>;
+  read(path: string): Promise<string>;
+  write(path: string, data: string): Promise<void>;
+  createFolder?(path: string): Promise<void>;
+  create?(path: string, content: string): Promise<unknown>;
+}
+
+export class NoteGenerator {
+  private adapter: NoteAdapter;
+  private opts: NoteGeneratorOpts;
+  constructor(adapter: NoteAdapter, opts: NoteGeneratorOpts) {
+    this.adapter = adapter; this.opts = opts;
+  }
+  /** 生成一条知识点笔记。冲突 → -2/-3。返回路径。 */
+  async generate(p: KnowledgePoint): Promise<string> {
+    const folder = np(`${this.opts.notesPath}/${sanitizeTitle(p.source_pdf)}`);
+    if (this.adapter.createFolder && !(await this.adapter.exists(folder))) await this.adapter.createFolder(folder);
+    let base = sanitizeTitle(p.title);
+    let path = `${folder}/${base}.md`;
+    let i = 2;
+    while (await this.adapter.exists(path)) { base = `${sanitizeTitle(p.title)} - ${i++}`; path = `${folder}/${base}.md`; }
+    const content = renderNote(p, new Date().toISOString().slice(0, 10));
+    if (this.adapter.create) { await this.adapter.create(path, content); }
+    else { await this.adapter.write(path, content); }
+    return path;
+  }
+}
