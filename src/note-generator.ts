@@ -16,7 +16,9 @@ export function sanitizeTitle(title: string): string {
 
 /** 渲染笔记(schema)。extracted_at 注入便于测试。 */
 export function renderNote(p: KnowledgePoint, extractedAt: string): string {
-  const fmText = p.source_text.slice(0, 200).replace(/"/g, '\\"').replace(/\n/g, " ");
+  // YAML 双引号标量转义:先转义反斜杠(否则末尾 \ 会吞掉闭合引号 → frontmatter 解析失败),
+  // 再转义双引号,最后换行→空格(单行标量)。
+  const fmText = p.source_text.slice(0, 200).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ");
   const lines: string[] = ["---"];
   lines.push("synthwell_type: knowledge_point");
   lines.push(`source_pdf: "[[${p.source_pdf}]]"`);

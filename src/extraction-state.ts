@@ -9,7 +9,7 @@ export class ExtractionState {
   }
   private async loadAll(): Promise<Record<string, ExtractedRecord>> {
     if (!await this.adapter.exists(this.path)) return {};
-    try { return JSON.parse(await this.adapter.read(this.path)); } catch { return {}; }
+    try { return JSON.parse(await this.adapter.read(this.path)); } catch { return {}; }  // 损坏的状态文件 → 当作无记录,重新抽取
   }
   async get(pdfName: string): Promise<ExtractedRecord | null> {
     const all = await this.loadAll();

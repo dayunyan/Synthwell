@@ -1,4 +1,7 @@
 import { estimateTokens } from "./usage.ts";
+import { parseLLMJson } from "./llm-json.ts";
+import type { LLMProvider } from "./llm-service.ts";
+import type { NoteGenerator, NoteGeneratorOpts } from "./note-generator.ts";
 
 export interface PageText { page: number; text: string; }
 export interface Chunk { text: string; pages: number[]; }
@@ -52,10 +55,6 @@ export function dedupe(points: BatchPoint[], threshold = 0.8): BatchPoint[] {
   }
   return out;
 }
-
-import type { LLMProvider, ChatMsg } from "./llm-service.ts";
-import type { NoteGenerator, NoteGeneratorOpts } from "./note-generator.ts";
-import { parseLLMJson } from "./llm-json.ts";
 
 export type ConfirmCostFn = (book: string, chunks: number, tokens: number, cost: number) => Promise<boolean>;
 

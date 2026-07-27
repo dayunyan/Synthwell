@@ -38,6 +38,19 @@ test("renderNote: frontmatter source_text 截断 ~200,body 原文完整", () => 
   assert.ok(md.includes(`> ${full}`));
 });
 
+test("renderNote: source_text 含反斜杠/双引号/换行 → YAML 转义,frontmatter 仍可解析", () => {
+  // 末尾反斜杠会吞掉闭合引号导致 frontmatter 炸裂(回归 nit #3)
+  const md = renderNote({ title: "t", summary: "s", source_pdf: "b.pdf", source_page: 1, source_text: '路径 C:\\dir 与 "引用"\n第二行\\', tags: [], related: [], model: "m", extraction_mode: "batch" }, "2026-07-27");
+  const fmMatch = md.match(/source_text:\s*"(.*?)"\n/s);
+  assert.ok(fmMatch, "source_text 行应为完整可匹配的双引号标量");
+  // 反斜杠被转义为 \\(每个 \ → \\)
+  assert.ok(fmMatch![1].includes("C:\\\\dir"));
+  assert.ok(!fmMatch![1].includes('\\"引用"'), "双引号应被转义,不应出现未转义的成对引号");
+  assert.ok(!fmMatch![1].includes("\n"), "换行应被替换为空格");
+  // body 原文完整未转义
+  assert.ok(md.includes('> 路径 C:\\dir 与 "引用"'));
+});
+
 test("NoteGenerator.generate: 标题冲突 → -2/-3; 文件夹不存在则创建", async () => {
   const created: string[] = [];
   const exists = (async (path: string) => path.endsWith("/飞轮效应.md")) as any;
