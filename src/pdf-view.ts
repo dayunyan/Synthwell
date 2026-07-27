@@ -79,13 +79,14 @@ export class PdfView extends ItemView {
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private lastContainerWidth = 0;
   // Fix 3 (zoom churn): the wheel zoom handler fires on every wheel tick
-  // (trackpad inertia = many events/sec) → each sets a new currentScale →
-  // #setScaleUpdatePages re-renders, cancelling the previous render
-  // (RenderingCancelledException storm) → zoom never settles. Coalesce rapid
-  // wheel events into ONE currentScale change per animation frame so renders
-  // can complete. zoomRaf/pendingDelta are per-view fields so onClose can
-  // cancel the pending rAF.
-  private zoomRaf = 0;
+  // (trackpad inertia = many events/sec). rAF-coalescing still applied a scale
+  // change EVERY frame during inertia → a cancel storm (page never visibly
+  // settled). Switched to a TRAILING throttle: accumulate deltaY, apply ONE
+  // currentScale change per ~150ms gap so pdfjs's re-render can complete
+  // between applications → no per-frame churn, with some feedback during
+  // continuous scroll. zoomTimer/pendingDelta are per-view fields so onClose
+  // can clear the pending timer.
+  private zoomTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingZoomDelta = 0;
 
   constructor(leaf: WorkspaceLeaf, plugin: Plugin) {
@@ -165,9 +166,9 @@ export class PdfView extends ItemView {
     // in-flight renders + clears the DOM), then the doc itself. Also tear down
     // Fix 1's ResizeObserver + pending resize timer and Fix 3's pending zoom
     // rAF so no stale callback fires after the view is gone.
-    if (this.zoomRaf) {
-      cancelAnimationFrame(this.zoomRaf);
-      this.zoomRaf = 0;
+    if (this.zoomTimer) {
+      clearTimeout(this.zoomTimer);
+      this.zoomTimer = null;
     }
     this.pendingZoomDelta = 0;
     if (this.resizeTimer) {
@@ -392,9 +393,14 @@ export class PdfView extends ItemView {
       if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       this.pendingZoomDelta += e.deltaY > 0 ? -0.1 : 0.1;
-      if (this.zoomRaf) return;
-      this.zoomRaf = requestAnimationFrame(() => {
-        this.zoomRaf = 0;
+      // Trailing throttle: if a timer is already pending, just accumulate; the
+      // existing timer applies the combined delta. ~one currentScale change per
+      // 150ms so pdfjs's re-render completes between applications (no per-frame
+      // cancel storm). registerDomEvent auto-removes on close; the timer is
+      // cleared in onClose.
+      if (this.zoomTimer) return;
+      this.zoomTimer = setTimeout(() => {
+        this.zoomTimer = null;
         if (!this.pdfViewer) { this.pendingZoomDelta = 0; return; }
         const next = Math.max(
           0.25,
@@ -402,7 +408,7 @@ export class PdfView extends ItemView {
         );
         this.pendingZoomDelta = 0;
         this.pdfViewer.currentScale = next;
-      });
+      }, 150);
     }, { passive: false });
   }
 }
