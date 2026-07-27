@@ -1,7 +1,9 @@
-import { estimateTokens } from "./usage.ts";
+import { estimateTokens, estimateCost } from "./usage.ts";
 import { parseLLMJson } from "./llm-json.ts";
 import type { LLMProvider } from "./llm-service.ts";
 import type { NoteGenerator, NoteGeneratorOpts } from "./note-generator.ts";
+import type { DocumentSource } from "./document-source.ts";
+import type { ExtractionState } from "./extraction-state.ts";
 
 export interface PageText { page: number; text: string; }
 export interface Chunk { text: string; pages: number[]; }
@@ -58,6 +60,8 @@ export function dedupe(points: BatchPoint[], threshold = 0.8): BatchPoint[] {
 
 export type ConfirmCostFn = (book: string, chunks: number, tokens: number, cost: number) => Promise<boolean>;
 
+export interface ExtractOpts { onProgress?: (done: number, total: number, points: number) => void; }
+
 export class BatchExtractor {
   private app: any;
   private llm: LLMProvider;
@@ -65,6 +69,7 @@ export class BatchExtractor {
   private noteOpts: NoteGeneratorOpts;
   private pricing: { inputPer1M: number; outputPer1M: number };
   private confirmFn: ConfirmCostFn;
+  private state: ExtractionState | null;
   constructor(
     app: any,
     llm: LLMProvider,
@@ -72,8 +77,9 @@ export class BatchExtractor {
     noteOpts: NoteGeneratorOpts,
     pricing: { inputPer1M: number; outputPer1M: number },
     confirmFn: ConfirmCostFn = () => Promise.resolve(true),
+    state: ExtractionState | null = null,
   ) {
-    this.app = app; this.llm = llm; this.noteGen = noteGen; this.noteOpts = noteOpts; this.pricing = pricing; this.confirmFn = confirmFn;
+    this.app = app; this.llm = llm; this.noteGen = noteGen; this.noteOpts = noteOpts; this.pricing = pricing; this.confirmFn = confirmFn; this.state = state;
   }
   /** 单块抽取:AI prompt(注入前文知识点 schema+摘要)+ parseLLMJson。返回知识点数组。 */
   async extractChunk(book: string, chunk: Chunk, prior: { title: string; summary: string }[]): Promise<BatchPoint[]> {
@@ -91,5 +97,54 @@ ${priorBlock}
     const raw = await this.llm.chat([{ role: "user", content: prompt }], { jsonMode: true, temperature: 0.2 });
     const parsed = parseLLMJson<BatchPoint[]>(raw);
     return parsed ?? [];
+  }
+
+  /** 编排:取文本 → 分块 → 预估+确认 → map(顺序前文) → reduce 去重 → 生成笔记 → 状态记录。
+   *  返回生成的知识点数。用户在 confirmFn 弹窗取消则返回 0。 */
+  async extract(source: DocumentSource, opts: ExtractOpts = {}): Promise<number> {
+    const doc = await source.getDocument();
+    if (!doc) throw new Error("无法加载 PDF 文档");
+    try {
+      const file = source.getFile();
+      // 1. 取每页文本
+      const pages: PageText[] = [];
+      for (let i = 1; i <= doc.numPages; i++) {
+        const p = await doc.getPage(i);
+        const tc = await p.getTextContent();
+        pages.push({ page: i, text: tc.items.map((it: any) => it.str ?? "").join("") });
+      }
+      // 2. 分块(页对齐,默认 3000 token/块)
+      const chunks = chunkPages(pages, 3000);
+      if (chunks.length === 0) return 0;
+      // 3. 预估花费 + 用户确认(块文本 + ~30% 前文上下文;输出粗估为输入的 30%)
+      const inputTokens = chunks.reduce((s, c) => s + estimateTokens(c.text) * 1.3, 0);
+      const estCost = estimateCost(inputTokens, inputTokens * 0.3, this.pricing);
+      if (!(await this.confirmFn(file.basename, chunks.length, Math.round(inputTokens), estCost))) return 0;
+      // 4. map(顺序注入前文知识点,限最近 30 个,控 token)
+      let all: BatchPoint[] = [];
+      let prior: { title: string; summary: string }[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const pts = await this.extractChunk(file.basename, chunks[i], prior);
+        all.push(...pts);
+        prior = [...prior, ...pts.map(p => ({ title: p.title, summary: p.summary }))].slice(-30);
+        opts.onProgress?.(i + 1, chunks.length, all.length);
+      }
+      // 5. reduce 去重(标题相似 >0.8 合并)
+      const deduped = dedupe(all, 0.8);
+      // 6. 生成笔记(source_text 用所在页全文——批处理无精确段范围,取页文本作溯源)
+      for (const p of deduped) {
+        const pageText = pages.find(pg => pg.page === p.source_page)?.text ?? "";
+        await this.noteGen.generate({
+          title: p.title, summary: p.summary, source_pdf: file.basename, source_page: p.source_page,
+          source_text: pageText, tags: p.tags, related: p.related,
+          model: this.noteOpts.model, extraction_mode: "batch",
+        });
+      }
+      // 7. 状态记录(避免重复抽 + 增量;state 为 null 则跳过)
+      if (this.state) await this.state.record(file.basename, file.path, deduped.map(p => p.title), this.noteOpts.model);
+      return deduped.length;
+    } finally {
+      await doc.destroy?.();
+    }
   }
 }
