@@ -66,6 +66,27 @@ export class PdfView extends ItemView {
   private eventBus: EventBus | null = null;
   private linkService: PDFLinkService | null = null;
   private pdfViewer: PDFViewer | null = null;
+  // Fix 1 (blurry): pdfjs's own ResizeObserver does NOT re-evaluate the
+  // "page-width" special currentScaleValue on container resize — it caches the
+  // resolved numeric scale once (at pagesinit, when the Obsidian leaf may still
+  // be ~168px wide) and never re-runs #setScale. So the canvas backing stays
+  // tiny while the container later grows to its real width → CSS-stretch →
+  // blurry. We attach OUR OWN ResizeObserver that re-sets currentScaleValue to
+  // "page-width" whenever the container's width actually changes, so it re-fits
+  // to the real width (and re-fits on leaf/window resize). Debounced so rapid
+  // resize churn doesn't storm the render queue.
+  private resizeObserver: ResizeObserver | null = null;
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastContainerWidth = 0;
+  // Fix 3 (zoom churn): the wheel zoom handler fires on every wheel tick
+  // (trackpad inertia = many events/sec) → each sets a new currentScale →
+  // #setScaleUpdatePages re-renders, cancelling the previous render
+  // (RenderingCancelledException storm) → zoom never settles. Coalesce rapid
+  // wheel events into ONE currentScale change per animation frame so renders
+  // can complete. zoomRaf/pendingDelta are per-view fields so onClose can
+  // cancel the pending rAF.
+  private zoomRaf = 0;
+  private pendingZoomDelta = 0;
 
   constructor(leaf: WorkspaceLeaf, plugin: Plugin) {
     super(leaf);
@@ -141,7 +162,23 @@ export class PdfView extends ItemView {
   async onClose() {
     // E3: airtight cleanup so memory returns to baseline (Annotator #233
     // failed here — 5GB never released). Order: tear down the viewer (cancels
-    // in-flight renders + clears the DOM), then the doc itself.
+    // in-flight renders + clears the DOM), then the doc itself. Also tear down
+    // Fix 1's ResizeObserver + pending resize timer and Fix 3's pending zoom
+    // rAF so no stale callback fires after the view is gone.
+    if (this.zoomRaf) {
+      cancelAnimationFrame(this.zoomRaf);
+      this.zoomRaf = 0;
+    }
+    this.pendingZoomDelta = 0;
+    if (this.resizeTimer) {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = null;
+    }
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver = null;
+    }
+    this.lastContainerWidth = 0;
     try { this.pdfViewer?.cleanup(); } catch { /* ignore */ }
     this.pdfViewer = null;
     this.linkService = null;
@@ -267,24 +304,44 @@ export class PdfView extends ItemView {
     // Auto-fit: open at page-width (best for reading CJK + EN). currentScaleValue
     // (pdf_viewer.mjs setter line 7880) accepts "auto"|"page-fit"|"page-actual"
     // |"page-width"|numeric; "page-width" resolves to pageWidthScale = container
-    // .clientWidth / currentPage.width (line 8519) inside #setScale. We set it on
-    // the `pagesinit` event (dispatched by PDFViewer.setDocument at line 8270,
-    // AFTER the .page placeholders are built into the DOM) rather than inline right
-    // after setDocument, because at the inline moment the Obsidian leaf may not yet
-    // have been laid out → container.clientWidth === 0 → pageWidthScale = 0 →
-    // #setScaleUpdatePages (8430) stores _currentScaleValue="page-width" but
-    // #isSameScale(0) returns true (initial _currentScale=UNKNOWN_SCALE=0, line
-    // 8310) so it early-returns (8445) WITHOUT applying the scale, and the cached
-    // value is NEVER re-evaluated on resize (the ResizeObserver callback at 9184
-    // does not re-run #setScale). By pagesinit time the page divs are in the DOM
-    // and the container has its real width, so pageWidthScale is a real number and
-    // the scale applies cleanly. Hooking pagesinit (rather than onePageRendered/
-    // rAF) is the canonical "pages initialized" point and guarantees the first
-    // page view exists (currentPage at line 8503 is non-null — otherwise #setScale
-    // returns at 8505 without applying).
+    // .clientWidth / currentPage.width (line 8519) inside #setScale.
+    //
+    // Fix 1 (blurry render): we previously set currentScaleValue="page-width" on
+    // the `pagesinit` event. But pagesinit fires BEFORE the Obsidian leaf has
+    // finished laying out → container.clientWidth ~168px → pageWidthScale ~0.27
+    // → canvas backing ~334px. The container then grows to its real ~816px, but
+    // pdfjs's own ResizeObserver (pdf_viewer.mjs 9184) does NOT re-run #setScale
+    // for the cached "page-width" special value — it caches the resolved numeric
+    // scale. The canvas is then CSS-stretched 2.4× to fill 816px → blurry.
+    //
+    // Fix: attach OUR OWN ResizeObserver on the container. Its FIRST callback
+    // fires once the container is laid out (real width), and we re-set
+    // currentScaleValue="page-width" there + on every subsequent real width
+    // change → #setScale re-resolves against the real width → canvas backing
+    // matches display × DPR → sharp. Debounced (~150ms) so rapid resize churn
+    // doesn't storm the render queue. Only act when width changed by >1px to
+    // ignore sub-pixel/height-only ResizeObserver callbacks.
+    //
+    // We keep the pagesinit hook as a fallback (it applies an initial best-
+    // guess scale before the container is fully laid out; the RO then corrects
+    // it to the true page-width once the real width is known).
     eventBus.on("pagesinit", () => {
       pdfViewer.currentScaleValue = "page-width";
     });
+
+    this.resizeObserver = new ResizeObserver(() => {
+      const width = container.clientWidth;
+      if (width === 0) return; // view torn down / hidden
+      if (Math.abs(width - this.lastContainerWidth) <= 1) return; // no real change
+      this.lastContainerWidth = width;
+      if (this.resizeTimer) clearTimeout(this.resizeTimer);
+      this.resizeTimer = setTimeout(() => {
+        this.resizeTimer = null;
+        if (!this.pdfViewer) return; // torn down during the debounce
+        this.pdfViewer.currentScaleValue = "page-width";
+      }, 150);
+    });
+    this.resizeObserver.observe(container);
 
     // Observability: log the textLayer span count on the textlayerrendered event,
     // which pdfjs dispatches per page AFTER the textLayer finishes rendering its
@@ -321,12 +378,31 @@ export class PdfView extends ItemView {
     // webview) since gesture events aren't in the shipped library either.
     // Clamp to pdfjs's supported range (0.25–4). passive:false so we can
     // preventDefault and stop the page from scrolling while zooming.
-    container.addEventListener("wheel", (e: WheelEvent) => {
+    //
+    // Fix 3 (zoom churn): the naive handler fired on EVERY wheel tick (trackpad
+    // inertia = many events/sec) → each set a new currentScale →
+    // #setScaleUpdatePages re-rendered, cancelling the in-flight render
+    // (RenderingCancelledException) → render storm, page never settled →
+    // "zoom unusable." Coalesce rapid wheel events into ONE currentScale change
+    // per animation frame: accumulate deltaY into pendingZoomDelta, schedule a
+    // single rAF that applies the accumulated delta once, so renders can
+    // complete between frames. registerDomEvent auto-removes the listener on
+    // close; the pending rAF is cancelled in onClose.
+    this.registerDomEvent(container, "wheel", (e: WheelEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      const next = pdfViewer.currentScale + delta;
-      pdfViewer.currentScale = Math.max(0.25, Math.min(4, next));
+      this.pendingZoomDelta += e.deltaY > 0 ? -0.1 : 0.1;
+      if (this.zoomRaf) return;
+      this.zoomRaf = requestAnimationFrame(() => {
+        this.zoomRaf = 0;
+        if (!this.pdfViewer) { this.pendingZoomDelta = 0; return; }
+        const next = Math.max(
+          0.25,
+          Math.min(4, this.pdfViewer.currentScale + this.pendingZoomDelta),
+        );
+        this.pendingZoomDelta = 0;
+        this.pdfViewer.currentScale = next;
+      });
     }, { passive: false });
   }
 }

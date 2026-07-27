@@ -6849,3 +6849,24 @@
   background: none !important;
 }
 
+/* [shiyue] Fix 2 (selection): force textLayer spans selectable. The DevTools
+   diagnostic showed .textLayer span computed `user-select: none` — the spans
+   INHERIT user-select:none from an Obsidian view ancestor (the scoped
+   pdf_viewer.css `.textLayer :is(span,br)` block at line 919 does NOT set
+   user-select, so the spans take the inherited value). pdfjs intends these
+   spans to be selectable — they're transparent text overlaid on the canvas
+   precisely so the user can select the underlying text. With user-select:none,
+   selection fails entirely (mouseup logs nothing because no range is ever
+   created). Override to text with !important to beat the inherited none.
+   NOTE: this also overrides the `.textLayer span[role="img"] { user-select:
+   none }` rule above (line 948) since !important wins regardless of
+   specificity — role="img" spans are rare image-like spans and making them
+   selectable is acceptable for the spike. Once Fix 1 corrects --scale-factor
+   (~1.33 instead of 0.2745), the span font-size will also be correct (no
+   longer the 2.73px the diagnostic showed). */
+.shiyue-pdf-root .textLayer :is(span, br) {
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  user-select: text !important;
+}
+
