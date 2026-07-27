@@ -7,6 +7,6 @@ export function estimateTokens(text: string): number {
 }
 
 /** 单次调用费用(¥):input/1M*inputPer1M + output/1M*outputPer1M。 */
-export function estimateCost(inputTokens: number, outputTokens: number, p: ModelPricing): number {
+export function estimateCost(inputTokens: number, outputTokens: number, p: Pick<ModelPricing, "inputPer1M" | "outputPer1M">): number {
   return (inputTokens / 1_000_000) * p.inputPer1M + (outputTokens / 1_000_000) * p.outputPer1M;
 }
