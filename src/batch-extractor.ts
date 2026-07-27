@@ -52,3 +52,45 @@ export function dedupe(points: BatchPoint[], threshold = 0.8): BatchPoint[] {
   }
   return out;
 }
+
+import type { LLMProvider, ChatMsg } from "./llm-service.ts";
+import type { NoteGenerator, NoteGeneratorOpts } from "./note-generator.ts";
+import { parseLLMJson } from "./llm-json.ts";
+
+export type ConfirmCostFn = (book: string, chunks: number, tokens: number, cost: number) => Promise<boolean>;
+
+export class BatchExtractor {
+  private app: any;
+  private llm: LLMProvider;
+  private noteGen: NoteGenerator;
+  private noteOpts: NoteGeneratorOpts;
+  private pricing: { inputPer1M: number; outputPer1M: number };
+  private confirmFn: ConfirmCostFn;
+  constructor(
+    app: any,
+    llm: LLMProvider,
+    noteGen: NoteGenerator,
+    noteOpts: NoteGeneratorOpts,
+    pricing: { inputPer1M: number; outputPer1M: number },
+    confirmFn: ConfirmCostFn = () => Promise.resolve(true),
+  ) {
+    this.app = app; this.llm = llm; this.noteGen = noteGen; this.noteOpts = noteOpts; this.pricing = pricing; this.confirmFn = confirmFn;
+  }
+  /** 单块抽取:AI prompt(注入前文知识点 schema+摘要)+ parseLLMJson。返回知识点数组。 */
+  async extractChunk(book: string, chunk: Chunk, prior: { title: string; summary: string }[]): Promise<BatchPoint[]> {
+    const priorBlock = prior.length
+      ? prior.map(p => `- ${p.title} — ${p.summary}`).join("\n")
+      : "(无)";
+    const prompt = `你是知识抽取助手。从下面这段 PDF 文本(来自《${book}》第 ${chunk.pages[0]}-${chunk.pages[chunk.pages.length-1]} 页)提取离散知识点。
+每个知识点给:title(简短名词短语)、summary(2-4 句)、source_page(所在页码)、tags(2-3 个主题标签)、related(与本块或前文知识点中相关的标题列表)。
+只返回 JSON 数组,不要其他文字:[{"title","summary","source_page","tags","related"}]
+
+【此前已抽取的知识点(只看 schema+摘要,别复述原文)】:
+${priorBlock}
+
+文本:${chunk.text}`;
+    const raw = await this.llm.chat([{ role: "user", content: prompt }], { jsonMode: true, temperature: 0.2 });
+    const parsed = parseLLMJson<BatchPoint[]>(raw);
+    return parsed ?? [];
+  }
+}

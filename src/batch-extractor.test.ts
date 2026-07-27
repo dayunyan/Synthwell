@@ -50,3 +50,28 @@ test("dedupe: 标题不同都保留", () => {
   const out = dedupe([{ title: "A", summary: "s", source_page: 1, tags: [], related: [] }, { title: "B", summary: "s", source_page: 2, tags: [], related: [] }], 0.8);
   assert.equal(out.length, 2);
 });
+
+import { BatchExtractor } from "./batch-extractor.ts";
+import type { LLMProvider, ChatMsg } from "./llm-service.ts";
+
+test("extractChunk: 调 LLM + 解析 JSON 数组 + 注入前文知识点", async () => {
+  let captured = "";
+  const llm: LLMProvider = {
+    async chat(msgs: ChatMsg[]) { captured = msgs[0].content ?? msgs[msgs.length-1].content; return JSON.stringify([{ title: "飞轮效应", summary: "正向循环", source_page: 3, tags: ["增长"], related: ["网络效应"] }]); },
+    async *stream() { throw new Error("no"); }, abort() {},
+  };
+  const be = new BatchExtractor({} as any, llm, {} as any, { notesPath: "x", model: "m" } as any, { inputPer1M: 1, outputPer1M: 2 });
+  const prior = [{ title: "网络效应", summary: "平台价值随用户增长" }];
+  const pts = await be.extractChunk("书.pdf", { text: "飞轮效应是指…", pages: [3, 4] }, prior);
+  assert.equal(pts.length, 1);
+  assert.equal(pts[0].title, "飞轮效应");
+  assert.ok(captured.includes("网络效应"), "前文知识点应注入 prompt");
+  assert.ok(captured.includes("飞轮效应是指"), "块文本应注入 prompt");
+  assert.ok(captured.includes("书.pdf"));
+});
+test("extractChunk: LLM 返回非 JSON → 返回空数组(不抛)", async () => {
+  const llm: LLMProvider = { async chat() { return "这不是 JSON"; }, async *stream() { throw 0; }, abort() {} };
+  const be = new BatchExtractor({} as any, llm, {} as any, { notesPath: "x", model: "m" } as any, { inputPer1M: 1, outputPer1M: 2 });
+  const pts = await be.extractChunk("b.pdf", { text: "t", pages: [1] }, []);
+  assert.equal(pts.length, 0);
+});
