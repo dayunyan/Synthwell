@@ -1,5 +1,6 @@
 // src/usage.ts
 import type { ModelPricing } from "./settings.ts";
+import { ensureFolder, dirOf } from "./vault-fs.ts";
 
 /** 粗估 token 数:中英混合 ≈ 字符数/2。仅用于抽取前预估,非精算。 */
 export function estimateTokens(text: string): number {
@@ -27,6 +28,7 @@ export class UsageTracker {
   async record(inputTokens: number, outputTokens: number): Promise<void> {
     const cur = await this.get();
     cur.inputTokens += inputTokens; cur.outputTokens += outputTokens;
+    await ensureFolder(this.adapter, dirOf(this.path));  // 首次写 .shiyue/ 不存在 → ENOENT,先建
     await this.adapter.write(this.path, JSON.stringify(cur));
   }
   async get(): Promise<{ month: string; inputTokens: number; outputTokens: number }> {

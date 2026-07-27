@@ -1,3 +1,5 @@
+import { ensureFolder, dirOf } from "./vault-fs.ts";
+
 export interface ExtractedRecord { hash: string; point_titles: string[]; model: string; extracted_at: string; }
 
 /** Per-PDF 抽取状态,持久化到 .shiyue/extraction-state.json。避免重复抽取 + 增量。 */
@@ -18,6 +20,7 @@ export class ExtractionState {
   async record(pdfName: string, hash: string, point_titles: string[], model: string): Promise<void> {
     const all = await this.loadAll();
     all[pdfName] = { hash, point_titles, model, extracted_at: new Date().toISOString().slice(0, 10) };
+    await ensureFolder(this.adapter, dirOf(this.path));  // 首次写 .shiyue/ 不存在 → ENOENT,先建
     await this.adapter.write(this.path, JSON.stringify(all, null, 2));
   }
 }

@@ -28,3 +28,19 @@ test("ExtractionState: 无记录返回 null", async () => {
   const st = new ExtractionState(fakeAdapter());
   assert.equal(await st.get("never.pdf"), null);
 });
+test("ExtractionState.record: 首次写前 mkdir .shiyue(真实 adapter.write 不建目录)", async () => {
+  // 回归生产 ENOENT:.shiyue/ 不存在,write(".shiyue/extraction-state.json") 炸。
+  const mkdirs: string[] = [];
+  const store: Record<string, any> = {};
+  const adapter = {
+    async exists(p: string) { return p in store; },
+    async read(p: string) { return JSON.stringify(store[p] ?? {}); },
+    async write(p: string, data: string) { store[p] = JSON.parse(data); },
+    async mkdir(p: string) { mkdirs.push(p); store[p] = {}; },
+  } as any;
+  const st = new ExtractionState(adapter);
+  await st.record("b.pdf", "h", ["t1"], "m");
+  assert.ok(mkdirs.includes(".shiyue"), "首次写应先 mkdir .shiyue");
+  const r = await st.get("b.pdf");
+  assert.equal(r?.point_titles.length, 1);
+});

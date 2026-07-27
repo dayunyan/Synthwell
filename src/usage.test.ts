@@ -60,3 +60,20 @@ test("UsageTracker: 跨月重置(month 不匹配归零)", async () => {
   assert.equal(u.outputTokens, 0);
   assert.notEqual(u.month, "2025-12");
 });
+
+test("UsageTracker.record: 首次写前 mkdir .shiyue(同 ExtractionState 的 ENOENT 回归)", async () => {
+  const mkdirs: string[] = [];
+  const store: Record<string, any> = {};
+  const adapter = {
+    async exists(p: string) { return p in store; },
+    async read(p: string) { return JSON.stringify(store[p] ?? {}); },
+    async write(p: string, data: string) { store[p] = JSON.parse(data); },
+    async mkdir(p: string) { mkdirs.push(p); store[p] = {}; },
+  } as any;
+  const { UsageTracker } = await import("./usage.ts");
+  const t = new UsageTracker(adapter);
+  await t.record(100, 50);
+  assert.ok(mkdirs.includes(".shiyue"), "首次写应先 mkdir .shiyue");
+  const u = await t.get();
+  assert.equal(u.inputTokens, 100);
+});

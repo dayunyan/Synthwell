@@ -1,3 +1,5 @@
+import { ensureFolder } from "./vault-fs.ts";
+
 export interface KnowledgePoint {
   title: string; summary: string;
   source_pdf: string;
@@ -47,16 +49,6 @@ export interface NoteAdapter {
   read(path: string): Promise<string>;
   write(path: string, data: string): Promise<void>;
   mkdir(path: string): Promise<void>;
-}
-
-/** 逐级 mkdir:DataAdapter.mkdir 单层(等同 fs.mkdir 无 recursive),
- *  须手动建每一级中间目录,否则父目录缺失 → ENOENT。 */
-async function ensureFolder(adapter: NoteAdapter, folderPath: string): Promise<void> {
-  let cur = "";
-  for (const part of folderPath.split("/").filter(Boolean)) {
-    cur = cur ? `${cur}/${part}` : part;
-    if (!(await adapter.exists(cur))) await adapter.mkdir(cur);
-  }
 }
 
 export class NoteGenerator {
