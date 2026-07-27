@@ -50,7 +50,7 @@ import { PDFViewer, PDFLinkService, EventBus } from "pdfjs-dist/web/pdf_viewer.m
 // build/pdf.mjs line 75-82). We only need DISABLE to opt out of annotation
 // EDITING — we do NOT edit PDF annotations (highlights live in Obsidian via
 // text-anchoring). See the setDocument note on pdf-view.ts line ~181.
-import { AnnotationEditorType } from "pdfjs-dist";
+import { AnnotationEditorType, AnnotationMode } from "pdfjs-dist";
 import { configureWorker } from "./pdf-worker";
 import { buildAnchor, pageTextFromItems } from "./highlight";
 
@@ -180,10 +180,10 @@ export class PdfView extends ItemView {
     // dynamically at construction time (the build-time onLoad patch is the
     // definitive neutralize; this covers any other dynamic reads).
     ;(globalThis as any).pdfjsLib = pdfjsLib;
-    // textLayerMode 1 = TextLayerMode.ENABLE (pdf_viewer.mjs 142-144); default
-    // annotationMode ENABLE_FORMS (2) is fine. l10n omitted → GenericL10n
-    // fallback (safe, see file header). removePageBorders trims the default
-    // 9px transparent border pdfjs draws around each page (cleaner in a leaf).
+    // textLayerMode 1 = TextLayerMode.ENABLE (pdf_viewer.mjs 142-144); l10n
+    // omitted → GenericL10n fallback (safe, see file header). removePageBorders
+    // trims the default 9px transparent border pdfjs draws around each page
+    // (cleaner in a leaf).
     const pdfViewer = new PDFViewer({
       container,
       viewer: viewerEl,
@@ -205,9 +205,30 @@ export class PdfView extends ItemView {
       // live in Obsidian via text-anchoring), so the clean fix is to opt out of
       // the editor entirely: DISABLE makes the `if` at 8155 false, the manager
       // is never constructed, and the null-eventBus path is unreachable.
-      // annotationMode (rendering EXISTING PDF annotations) is left at its
-      // default ENABLE_FORMS=2 (line 7728) so PDF highlights/etc. still render.
       annotationEditorMode: AnnotationEditorType.DISABLE,
+      // DISABLE annotation RENDERING (AnnotationMode.DISABLE = 0). The
+      // linkService.setDocument fix (commit 449f12f) did NOT eliminate the
+      // annotation-layer errors — the linkService REFERENCE is undefined at
+      // AnnotationLayer.#linkService, not a pdfDocument issue. PDFPageView
+      // (pdf_viewer.mjs line 6889) builds the AnnotationLayerBuilder ONLY iff
+      // `this.#annotationMode !== AnnotationMode.DISABLE`; with ENABLE_FORMS=2
+      // (the default, line 7728) it IS built, and during page draw
+      // LinkAnnotationElement.render / _bindLink call linkService
+      // .addLinkAttributes / getDestinationHash (build/pdf.mjs), which throw
+      // `Cannot read properties of undefined (reading 'addLinkAttributes')` /
+      // `getDestinationHash` on EVERY page render (initial + each zoom
+      // re-render), disrupting the page draw so the textLayer's selection-
+      // bounding (.endOfContent + global selectionchange listener) never
+      // activates → can't select. Setting annotationMode DISABLE makes the gate
+      // at 6889 false → no AnnotationLayerBuilder → no LinkAnnotationElement
+      // → no error → page draw completes cleanly → textLayer selection
+      // bounding activates → selection works. Zoom re-renders are clean too.
+      // MVP follow-up: properly wire linkService into
+      // PDFViewer._layerProperties (or however v5 threads it to
+      // AnnotationLayer.#linkService) to RE-ENABLE annotation rendering (links/
+      // form fields) — for the spike, disabling is acceptable since annotations
+      // aren't core to reading+selection.
+      annotationMode: AnnotationMode.DISABLE,
       removePageBorders: true,
     });
     linkService.setViewer(pdfViewer);
@@ -244,11 +265,26 @@ export class PdfView extends ItemView {
     pdfViewer.setDocument(this.doc);
 
     // Auto-fit: open at page-width (best for reading CJK + EN). currentScaleValue
-    // (pdf_viewer.mjs setter) accepts "auto"|"page-fit"|"page-actual"|"page-width"
-    // |numeric. Set AFTER setDocument so numPages is known; the value is applied
-    // on the next layout pass (pagesinit / first page render). "page-width" fits
-    // the page width to the container's content width — the standard reader default.
-    pdfViewer.currentScaleValue = "page-width";
+    // (pdf_viewer.mjs setter line 7880) accepts "auto"|"page-fit"|"page-actual"
+    // |"page-width"|numeric; "page-width" resolves to pageWidthScale = container
+    // .clientWidth / currentPage.width (line 8519) inside #setScale. We set it on
+    // the `pagesinit` event (dispatched by PDFViewer.setDocument at line 8270,
+    // AFTER the .page placeholders are built into the DOM) rather than inline right
+    // after setDocument, because at the inline moment the Obsidian leaf may not yet
+    // have been laid out → container.clientWidth === 0 → pageWidthScale = 0 →
+    // #setScaleUpdatePages (8430) stores _currentScaleValue="page-width" but
+    // #isSameScale(0) returns true (initial _currentScale=UNKNOWN_SCALE=0, line
+    // 8310) so it early-returns (8445) WITHOUT applying the scale, and the cached
+    // value is NEVER re-evaluated on resize (the ResizeObserver callback at 9184
+    // does not re-run #setScale). By pagesinit time the page divs are in the DOM
+    // and the container has its real width, so pageWidthScale is a real number and
+    // the scale applies cleanly. Hooking pagesinit (rather than onePageRendered/
+    // rAF) is the canonical "pages initialized" point and guarantees the first
+    // page view exists (currentPage at line 8503 is non-null — otherwise #setScale
+    // returns at 8505 without applying).
+    eventBus.on("pagesinit", () => {
+      pdfViewer.currentScaleValue = "page-width";
+    });
 
     // Observability: log the textLayer span count on the textlayerrendered event,
     // which pdfjs dispatches per page AFTER the textLayer finishes rendering its
