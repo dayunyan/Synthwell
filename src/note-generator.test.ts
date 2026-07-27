@@ -51,18 +51,38 @@ test("renderNote: source_text 含反斜杠/双引号/换行 → YAML 转义,fron
   assert.ok(md.includes('> 路径 C:\\dir 与 "引用"'));
 });
 
-test("NoteGenerator.generate: 标题冲突 → -2/-3; 文件夹不存在则创建", async () => {
+test("NoteGenerator.generate: 标题冲突 → -2/-3", async () => {
   const created: string[] = [];
-  const exists = (async (path: string) => path.endsWith("/飞轮效应.md")) as any;
+  const existing = new Set<string>(["拾阅笔记/知识点/书.pdf/飞轮效应.md"]);  // 第一个已存在
   const adapter = {
-    exists, async read() { return ""; }, async write(path: string, content: string) { created.push(path); },
+    async exists(path: string) { return existing.has(path); },
+    async read() { return ""; },
+    async write(path: string) { created.push(path); existing.add(path); },
+    async mkdir(path: string) { existing.add(path); },  // mkdir 后该路径视为存在
   } as any;
   const { NoteGenerator } = await import("./note-generator.ts");
   const gen = new NoteGenerator(adapter as any, { notesPath: "拾阅笔记/知识点", model: "deepseek-v4-flash" });
   const p = { title: "飞轮效应", summary: "s", source_pdf: "书.pdf", source_page: 1, source_text: "原文", tags: ["飞轮"], related: [], model: "deepseek-v4-flash", extraction_mode: "batch" as const };
-  await gen.generate(p);
-  adapter.exists = (async (path: string) => path.endsWith("/飞轮效应.md") || path.endsWith("/飞轮效应 - 2.md")) as any;
-  await gen.generate(p);
-  assert.ok(created.length >= 2);
-  assert.ok(created.some(p => p.includes("飞轮效应 - 2")) || created.some(p => p.includes("飞轮效应 - 3")));
+  await gen.generate(p);   // 基名已存在 → 用 -2
+  await gen.generate(p);   // -2 现也存在 → 用 -3
+  assert.equal(created.length, 2);
+  assert.ok(created[0].endsWith("/飞轮效应 - 2.md"), `第一次应写 -2,实际:${created[0]}`);
+  assert.ok(created[1].endsWith("/飞轮效应 - 3.md"), `第二次应写 -3,实际:${created[1]}`);
+});
+
+test("NoteGenerator.generate: 嵌套文件夹逐级 mkdir(真实 adapter.mkdir 单层,不递归)", async () => {
+  // 回归生产 ENOENT:DataAdapter.mkdir 单层,须手动建中间目录,否则 write 报 no such file or directory
+  const mkdirs: string[] = [];
+  const existing = new Set<string>();  // 全空 → 每一级都不存在
+  const adapter = {
+    async exists(path: string) { return existing.has(path); },
+    async read() { return ""; },
+    async write(path: string) { existing.add(path); },
+    async mkdir(path: string) { mkdirs.push(path); existing.add(path); },
+  } as any;
+  const { NoteGenerator } = await import("./note-generator.ts");
+  const gen = new NoteGenerator(adapter as any, { notesPath: "拾阅笔记/知识点", model: "m" });
+  await gen.generate({ title: "飞轮", summary: "s", source_pdf: "书.pdf", source_page: 1, source_text: "原文", tags: [], related: [], model: "m", extraction_mode: "batch" });
+  // 三级目录都不存在 → 逐级 mkdir
+  assert.deepEqual(mkdirs, ["拾阅笔记", "拾阅笔记/知识点", "拾阅笔记/知识点/书.pdf"]);
 });

@@ -46,8 +46,17 @@ export interface NoteAdapter {
   exists(path: string): Promise<boolean>;
   read(path: string): Promise<string>;
   write(path: string, data: string): Promise<void>;
-  createFolder?(path: string): Promise<void>;
-  create?(path: string, content: string): Promise<unknown>;
+  mkdir(path: string): Promise<void>;
+}
+
+/** 逐级 mkdir:DataAdapter.mkdir 单层(等同 fs.mkdir 无 recursive),
+ *  须手动建每一级中间目录,否则父目录缺失 → ENOENT。 */
+async function ensureFolder(adapter: NoteAdapter, folderPath: string): Promise<void> {
+  let cur = "";
+  for (const part of folderPath.split("/").filter(Boolean)) {
+    cur = cur ? `${cur}/${part}` : part;
+    if (!(await adapter.exists(cur))) await adapter.mkdir(cur);
+  }
 }
 
 export class NoteGenerator {
@@ -59,14 +68,13 @@ export class NoteGenerator {
   /** 生成一条知识点笔记。冲突 → -2/-3。返回路径。 */
   async generate(p: KnowledgePoint): Promise<string> {
     const folder = np(`${this.opts.notesPath}/${sanitizeTitle(p.source_pdf)}`);
-    if (this.adapter.createFolder && !(await this.adapter.exists(folder))) await this.adapter.createFolder(folder);
+    await ensureFolder(this.adapter, folder);
     let base = sanitizeTitle(p.title);
     let path = `${folder}/${base}.md`;
     let i = 2;
     while (await this.adapter.exists(path)) { base = `${sanitizeTitle(p.title)} - ${i++}`; path = `${folder}/${base}.md`; }
     const content = renderNote(p, new Date().toISOString().slice(0, 10));
-    if (this.adapter.create) { await this.adapter.create(path, content); }
-    else { await this.adapter.write(path, content); }
+    await this.adapter.write(path, content);
     return path;
   }
 }
