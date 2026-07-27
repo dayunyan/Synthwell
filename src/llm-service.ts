@@ -46,10 +46,14 @@ export class OpenAICompatibleProvider implements LLMProvider {
       body: JSON.stringify(body),
       signal: o.signal ?? this.controller.signal,
     });
-    if (!res.ok || !res.body) throw new Error(`LLM stream ${res.status}`);
+    if (!res.ok) throw new Error(`LLM stream ${res.status}: ${await res.text()}`);
+    if (!res.body) throw new Error(`LLM stream ${res.status}: empty body`);
     let buf = "";
     for await (const chunk of res.body as any) {
       buf += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      // 规范化 CRLF → LF:真实 SSE(部分代理)用 \r\n\r\n 分隔事件,\r\n 行分隔,
+      // 不含字面 \n\n,直接 indexOf("\n\n") 会吞掉整段。先归一化。
+      buf = buf.replace(/\r\n/g, "\n");
       let idx;
       while ((idx = buf.indexOf("\n\n")) >= 0) {
         const block = buf.slice(0, idx); buf = buf.slice(idx + 2);

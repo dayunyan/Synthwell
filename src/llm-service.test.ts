@@ -52,6 +52,16 @@ test("stream: 逐块 yield content deltas", async () => {
   assert.equal(out.join(""), "Hello world");
 });
 
+test("stream: CRLF 行结尾也能解析(不被吞)", async () => {
+  const sse = `data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" } }] })}\r\n\r\ndata: ${JSON.stringify({ choices: [{ delta: { content: " world" } }] })}\r\n\r\ndata: [DONE]\r\n\r\n`;
+  const fakeBody = (async function* () { for (const ch of sse) yield ch; }());
+  const f = async () => ({ ok: true, status: 200, text: async () => "", body: fakeBody }) as any;
+  const p = new OpenAICompatibleProvider({ baseURL: "https://api.deepseek.com", apiKey: "k", model: "m", fetchImpl: f as any });
+  const out: string[] = [];
+  for await (const chunk of p.stream([{ role: "user", content: "hi" }])) out.push(chunk);
+  assert.equal(out.join(""), "Hello world");
+});
+
 test("abort: 调 controller.abort()(通过 signal 触发)", async () => {
   let aborted = false;
   const f = async (_url: string, init: any) => {

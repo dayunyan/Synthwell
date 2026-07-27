@@ -23,6 +23,7 @@ export class PdfDocumentSource implements DocumentSource {
   getFile(): TFile { return this.file; }
   getSelection(): { text: string; page: number } | null { return null; }
   async getDocument(): Promise<PDFDocumentProxy | null> {
+    // 返回的 PDFDocumentProxy 由调用方负责 destroy()(批处理结束后释放)。
     if (this.doc) return this.doc;
     // 复用 spike 集成发现 #12:getResourcePath + fetch(走 webview 有权限层,readBinary 在 TCC 下 EPERM)
     const { configureWorker } = await import("./pdf-worker.ts");

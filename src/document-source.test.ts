@@ -1,7 +1,6 @@
 // src/document-source.test.ts
 import { test } from "node:test";
 import assert from "node:assert";
-import { pageTextFromItems } from "./highlight.ts"; // spike 既有,复用
 import type { DocumentSource } from "./document-source.ts";
 
 test("DocumentSource 接口形状:getFile/getDocument/getSelection", () => {

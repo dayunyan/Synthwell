@@ -29,3 +29,34 @@ test("UsageTracker: record 累加同月 token,monthKey 用 YYYY-MM", async () =>
   const { monthKey } = await import("./usage.ts");
   assert.ok(/^\d{4}-\d{2}$/.test(monthKey(new Date("2026-07-27T10:00:00"))));
 });
+
+test("UsageTracker: record 累加 + get 回读同月累计", async () => {
+  let store: Record<string, any> = {};
+  const adapter = {
+    async exists() { return "u" in store; },
+    async read() { return JSON.stringify(store["u"]); },
+    async write(_p: string, data: string) { store["u"] = JSON.parse(data); },
+  } as any;
+  const { UsageTracker } = await import("./usage.ts");
+  const t = new UsageTracker(adapter);
+  await t.record(100, 50);
+  await t.record(200, 10);
+  const u = await t.get();
+  assert.equal(u.inputTokens, 300);
+  assert.equal(u.outputTokens, 60);
+});
+
+test("UsageTracker: 跨月重置(month 不匹配归零)", async () => {
+  let store = { u: { month: "2025-12", inputTokens: 9999, outputTokens: 9999 } };
+  const adapter = {
+    async exists() { return true; },
+    async read() { return JSON.stringify(store["u"]); },
+    async write() {},
+  } as any;
+  const { UsageTracker } = await import("./usage.ts");
+  const t = new UsageTracker(adapter);
+  const u = await t.get();  // current month != 2025-12
+  assert.equal(u.inputTokens, 0);
+  assert.equal(u.outputTokens, 0);
+  assert.notEqual(u.month, "2025-12");
+});
