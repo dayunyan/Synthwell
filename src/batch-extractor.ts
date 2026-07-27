@@ -79,6 +79,13 @@ function normalizePoint(raw: any, fallbackPage: number): BatchPoint | null {
 
 export interface ExtractOpts { onProgress?: (done: number, total: number, points: number) => void; }
 
+export interface ExtractResult {
+  count: number;       // 生成的知识点数
+  chunks: number;      // 总块数
+  cancelled: boolean;  // 用户在弹窗取消
+  message: string;     // 人类可读结论(给 Notice)
+}
+
 export class BatchExtractor {
   private app: any;
   private llm: LLMProvider;
@@ -112,15 +119,17 @@ ${priorBlock}
 
 文本:${chunk.text}`;
     const raw = await this.llm.chat([{ role: "user", content: prompt }], { jsonMode: true, temperature: 0.2 });
-    const parsed = parseLLMJson<any[]>(raw);
-    if (!Array.isArray(parsed)) return [];
+    const parsed = parseLLMJson<any>(raw);
+    // 模型可能把数组包在对象里 {"points":[...]} / {"knowledge_points":[...]} / {"result":[...]}
+    const arr: any[] = Array.isArray(parsed) ? parsed
+      : (parsed && typeof parsed === "object" ? (Object.values(parsed).find(v => Array.isArray(v)) as any[] | undefined) ?? [] : []);
     const fallbackPage = chunk.pages[0];
-    return parsed.map(p => normalizePoint(p, fallbackPage)).filter(Boolean) as BatchPoint[];
+    return arr.map(p => normalizePoint(p, fallbackPage)).filter(Boolean) as BatchPoint[];
   }
 
   /** 编排:取文本 → 分块 → 预估+确认 → map(顺序前文) → reduce 去重 → 生成笔记 → 状态记录。
-   *  返回生成的知识点数。用户在 confirmFn 弹窗取消则返回 0。 */
-  async extract(source: DocumentSource, opts: ExtractOpts = {}): Promise<number> {
+   *  返回 ExtractResult;count=0 时 message 说明卡在哪一段。 */
+  async extract(source: DocumentSource, opts: ExtractOpts = {}): Promise<ExtractResult> {
     const doc = await source.getDocument();
     if (!doc) throw new Error("无法加载 PDF 文档");
     try {
@@ -132,24 +141,34 @@ ${priorBlock}
         const tc = await p.getTextContent();
         pages.push({ page: i, text: tc.items.map((it: any) => it.str ?? "").join("") });
       }
+      const totalChars = pages.reduce((s, p) => s + p.text.length, 0);
+      console.log(`[shiyue] 文本:${doc.numPages} 页,${totalChars} 字符`);
       // 2. 分块(页对齐,默认 3000 token/块)
       const chunks = chunkPages(pages, 3000);
-      if (chunks.length === 0) return 0;
+      console.log(`[shiyue] 分块:${chunks.length} 块`);
+      if (chunks.length === 0 || totalChars === 0) {
+        return { count: 0, chunks: chunks.length, cancelled: false,
+          message: "PDF 无可抽取文本(可能是扫描件/图片 PDF,pdfjs 取不到文本层)" };
+      }
       // 3. 预估花费 + 用户确认(块文本 + ~30% 前文上下文;输出粗估为输入的 30%)
       const inputTokens = chunks.reduce((s, c) => s + estimateTokens(c.text) * 1.3, 0);
       const estCost = estimateCost(inputTokens, inputTokens * 0.3, this.pricing);
-      if (!(await this.confirmFn(file.basename, chunks.length, Math.round(inputTokens), estCost))) return 0;
+      if (!(await this.confirmFn(file.basename, chunks.length, Math.round(inputTokens), estCost))) {
+        return { count: 0, chunks: chunks.length, cancelled: true, message: "用户取消" };
+      }
       // 4. map(顺序注入前文知识点,限最近 30 个,控 token)
       let all: BatchPoint[] = [];
       let prior: { title: string; summary: string }[] = [];
       for (let i = 0; i < chunks.length; i++) {
         const pts = await this.extractChunk(file.basename, chunks[i], prior);
+        console.log(`[shiyue] 块 ${i + 1}/${chunks.length} → ${pts.length} 点`);
         all.push(...pts);
         prior = [...prior, ...pts.map(p => ({ title: p.title, summary: p.summary }))].slice(-30);
         opts.onProgress?.(i + 1, chunks.length, all.length);
       }
       // 5. reduce 去重(标题相似 >0.8 合并)
       const deduped = dedupe(all, 0.8);
+      console.log(`[shiyue] 去重:${all.length} → ${deduped.length} 点`);
       // 6. 生成笔记(source_text 用所在页全文——批处理无精确段范围,取页文本作溯源)
       for (const p of deduped) {
         const pageText = pages.find(pg => pg.page === p.source_page)?.text ?? "";
@@ -161,7 +180,11 @@ ${priorBlock}
       }
       // 7. 状态记录(避免重复抽 + 增量;state 为 null 则跳过)
       if (this.state) await this.state.record(file.basename, file.path, deduped.map(p => p.title), this.noteOpts.model);
-      return deduped.length;
+      if (deduped.length === 0) {
+        return { count: 0, chunks: chunks.length, cancelled: false,
+          message: `LLM 未返回有效知识点(${chunks.length} 块全空——看控制台每块点数,可能模型未按 JSON 数组返回)` };
+      }
+      return { count: deduped.length, chunks: chunks.length, cancelled: false, message: "抽取完成" };
     } finally {
       await doc.destroy?.();
     }

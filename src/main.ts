@@ -83,9 +83,9 @@ export default class ShiyuePlugin extends Plugin {
     const be = new BatchExtractor(this.app, provider, noteGen, { notesPath: this.settings.notesPath, model: this.settings.model }, pricing, (book, chunks, tokens, cost) => this.confirmCost(book, chunks, tokens, cost), state);
     const source = new PdfDocumentSource(view.file, this.app, this);
     new Notice("抽取中…(大 PDF 可能需要几十秒)", 4000);
-    const n = await be.extract(source, { onProgress: (d, t, p) => new Notice(`抽取中 ${d}/${t} → ${p} 点`, 2000) });
-    if (n > 0) new Notice(`✓ 抽取完成:${n} 个知识点(见 ${this.settings.notesPath}/)`, 8000);
-    else new Notice("抽取未完成(可能已取消或无知识点)", 4000);
+    const r = await be.extract(source, { onProgress: (d, t, p) => new Notice(`抽取中 ${d}/${t} → ${p} 点`, 2000) });
+    if (r.count > 0) new Notice(`✓ ${r.message}:${r.count} 个知识点(见 ${this.settings.notesPath}/)`, 8000);
+    else new Notice(`✗ ${r.message}`, 8000);
   }
 
   /** 预估花费弹窗(Obsidian Modal):点「继续」返回 true,关闭/取消返回 false。 */

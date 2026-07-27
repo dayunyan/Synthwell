@@ -100,3 +100,14 @@ test("extractChunk: LLM 返回的点缺 tags/related 或类型错 → 规范化,
   const { dedupe } = await import("./batch-extractor.ts");
   assert.equal(dedupe(pts).length, 3);
 });
+test("extractChunk: LLM 把数组包在对象里 {points:[...]} → 抽出数组", async () => {
+  // 模型偶尔返回 {"knowledge_points":[...]} / {"result":[...]} 而非裸数组
+  const llm: LLMProvider = {
+    async chat() { return JSON.stringify({ knowledge_points: [{ title: "点A", summary: "s", source_page: 1 }] }); },
+    async *stream() { throw 0; }, abort() {},
+  };
+  const be = new BatchExtractor({} as any, llm, {} as any, { notesPath: "x", model: "m" } as any, { inputPer1M: 1, outputPer1M: 2 });
+  const pts = await be.extractChunk("b.pdf", { text: "t", pages: [1] }, []);
+  assert.equal(pts.length, 1);
+  assert.equal(pts[0].title, "点A");
+});
