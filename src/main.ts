@@ -1,8 +1,15 @@
 import { Plugin, TFile, FuzzySuggestModal, Notice } from "obsidian";
 import { PdfView, SHIYUE_PDF_VIEW } from "./pdf-view";
+import { ShiyueSettings, DEFAULT_SETTINGS } from "./settings";
+import { ShiyueSettingTab } from "./settings-tab";
+import { UsageTracker } from "./usage";
 
 export default class ShiyuePlugin extends Plugin {
+  settings: ShiyueSettings = DEFAULT_SETTINGS;
+
   async onload() {
+    await this.loadSettings();
+
     this.registerView(SHIYUE_PDF_VIEW, (leaf) => new PdfView(leaf, this));
 
     this.addCommand({
@@ -10,10 +17,20 @@ export default class ShiyuePlugin extends Plugin {
       name: "拾阅: 打开 PDF",
       callback: () => this.openPdfPicker(),
     });
+
+    this.addSettingTab(new ShiyueSettingTab(this.app, this, new UsageTracker(this.app.vault.adapter as any)));
   }
 
   async onunload() {
     this.app.workspace.detachLeavesOfType(SHIYUE_PDF_VIEW);
+  }
+
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
   }
 
   async openPdfPicker() {
