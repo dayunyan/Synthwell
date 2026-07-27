@@ -6839,3 +6839,13 @@
   border:2px solid transparent;
 }
 
+/* [shiyue] Suppress the pdfjs loading spinner gif. Its url("images/loading-icon.gif")
+   is relative and resolves to app://obsidian.md/images/... which Obsidian doesn't
+   serve → 404 console noise. The gif ships in pdfjs-dist/web/images/ but wiring it
+   to a plugin-served app:// path from CSS isn't feasible. Pages render fast enough
+   that no spinner is fine for the spike; null the background so no fetch fires. */
+.shiyue-pdf-root .pdfViewer .page.loadingIcon::after,
+.shiyue-pdf-root .pdfViewer .page.loading::after {
+  background: none !important;
+}
+

@@ -226,10 +226,17 @@ export class PdfView extends ItemView {
     // onePageRendered resolves when the first page has rendered its canvas +
     // textLayer; we read the span count then to mirror the old
     // "[shiyue] textlayer page N spans M" log.
-    void pdfViewer.onePageRendered.promise.then(() => {
-      const pv = pdfViewer.getPageView(0);
-      const spans = pv?.textLayer?.div?.querySelectorAll("span").length ?? 0;
-      console.info("[shiyue] textlayer page 1 spans", spans);
-    }).catch(() => { /* view torn down before first render */ });
+    // onePageRendered is a v5 GETTER (pdf_viewer.mjs 7927-7928) returning
+    // _onePageRenderedCapability.promise (a bare Promise) or null — NOT a
+    // {promise} deferred. Using .promise on it yielded undefined→.then threw.
+    // Use it directly; guard for null (no doc / view torn down).
+    const onePageRendered = pdfViewer.onePageRendered;
+    if (onePageRendered) {
+      onePageRendered.then(() => {
+        const pv = pdfViewer.getPageView(0);
+        const spans = pv?.textLayer?.div?.querySelectorAll("span").length ?? 0;
+        console.info("[shiyue] textlayer page 1 spans", spans);
+      }).catch(() => { /* view torn down before first render */ });
+    }
   }
 }
