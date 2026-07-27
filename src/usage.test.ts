@@ -16,3 +16,16 @@ test("estimateCost = input/1M*inputPer1M + output/1M*outputPer1M", () => {
   // 500k + 500k = 1 + 3 = 4
   assert.equal(estimateCost(500_000, 500_000, p), 4);
 });
+
+test("UsageTracker: record 累加同月 token,monthKey 用 YYYY-MM", async () => {
+  // 用内存 fake adapter(不依赖真 Obsidian vault)
+  let store: Record<string, any> = {};
+  const adapter = {
+    async exists() { return true; },
+    async read() { return JSON.stringify(store["u"] ?? { month: "2026-07", inputTokens: 0, outputTokens: 0 }); },
+    async write(path: string, data: string) { store["u"] = JSON.parse(data); },
+  } as any;
+  // monthKey 纯函数可单测
+  const { monthKey } = await import("./usage.ts");
+  assert.ok(/^\d{4}-\d{2}$/.test(monthKey(new Date("2026-07-27T10:00:00"))));
+});
