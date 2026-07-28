@@ -90,12 +90,21 @@ export class ShiyueWorkspace implements PanelActions {
   }
 
   // ---- 加载文件 ----
-  /** 确保 split + 原生预览打开 file + 重挂选区捕获 + tracker.set → 按钮启用。 */
+  /** 确保 split + 打开 file。preview 有文件 → 同 split 新 tab;preview 空 → 替换。(#3) */
   async openInShiyue(file: TFile): Promise<void> {
     await this.ensureShiyueSplit();
-    const leaf = this.previewLeaf;
-    if (!leaf) { new Notice("无法创建预览面板"); return; }
-    await leaf.openFile(file);  // 走原生 'pdf' 路由
+    const preview = this.previewLeaf;
+    if (!preview) { new Notice("无法创建预览面板"); return; }
+    const hasDoc = !!this.tracker.get() && this.isPreviewLeafValid();
+    let target: WorkspaceLeaf;
+    if (hasDoc) {
+      await this.app.workspace.setActiveLeaf(preview, { focus: false });
+      target = this.app.workspace.getLeaf(true) as WorkspaceLeaf;  // active split 内新 tab
+    } else {
+      target = preview;  // 空 → 替换
+    }
+    await target.openFile(file);
+    this.previewLeaf = target;  // 跟踪最新激活 leaf
     this.attachPreviewCapture();  // view 换了,重挂
     this.tracker.set(file);
   }
@@ -123,9 +132,13 @@ export class ShiyueWorkspace implements PanelActions {
 
   private injectLogos(): void {
     for (const leaf of this.app.workspace.getLeavesOfType("graph")) {
-      const content = (leaf.view as unknown as { contentEl?: HTMLElement }).contentEl;
-      if (!content || content.querySelector(`[${SHIYUE_LOGO_ATTR}]`)) continue;
-      const btn = content.createEl("div", { attr: { [SHIYUE_LOGO_ATTR]: "" }, cls: "shiyue-logo" });
+      const view = leaf.view as unknown as { containerEl?: HTMLElement; contentEl?: HTMLElement };
+      // #2:注入视图头栏 .view-actions(「...」more 按钮所在),prepend 到最左 → 在「...」之左。
+      const actions = view?.containerEl?.querySelector?.(".view-actions") as HTMLElement | null;
+      if (!actions) continue;  // 无头栏动作区 → 不注入(避免与原生图谱控件重叠)
+      if (actions.querySelector(`[${SHIYUE_LOGO_ATTR}]`)) continue;
+      const btn = actions.createEl("div", { attr: { [SHIYUE_LOGO_ATTR]: "" }, cls: "shiyue-logo" });
+      actions.insertBefore(btn, actions.firstChild);  // prepend → 动作区最左
       btn.setText("📖");
       btn.onclick = () => { void this.ensureShiyueSplit(); };
     }
