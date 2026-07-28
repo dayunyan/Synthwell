@@ -1,6 +1,6 @@
 // src/usage.ts
 import type { ModelPricing } from "../../settings.ts";
-import { ensureFolder, dirOf } from "../../vault-fs.ts";
+import { ensureFolder, dirOf } from "../fs/vault-fs.ts";
 
 /** 粗估 token 数:中英混合 ≈ 字符数/2。仅用于抽取前预估,非精算。 */
 export function estimateTokens(text: string): number {

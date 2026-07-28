@@ -1,4 +1,4 @@
-import { ensureFolder } from "../../vault-fs.ts";
+import { ensureFolder } from "../fs/vault-fs.ts";
 
 export interface KnowledgePoint {
   title: string; summary: string;
