@@ -1,6 +1,7 @@
 // src/workspace/shiyue-workspace.ts
 import { App, Plugin, TFile, FuzzySuggestModal, Notice, WorkspaceLeaf } from "obsidian";
-import { SelectionCache, SelInfo, attachSelectionCapture } from "../preview/selection-capture.ts";
+import { SelectionCache, type SelInfo } from "../preview/selection-cache.ts";
+import { attachSelectionCapture } from "../preview/selection-capture.ts";
 import { PreviewTracker } from "./preview-tracker.ts";
 import { ExtractionController } from "./extraction-controller.ts";
 import type { ShiyueSettings } from "../settings.ts";

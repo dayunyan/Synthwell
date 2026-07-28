@@ -1,11 +1,9 @@
-// src/preview/selection-capture.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SelectionCache } from "./selection-capture.ts";
+import { SelectionCache } from "./selection-cache.ts";
 
 test("SelectionCache: 初始 get 为 null", () => {
-  const c = new SelectionCache();
-  assert.equal(c.get(), null);
+  assert.equal(new SelectionCache().get(), null);
 });
 
 test("SelectionCache: set 后 get 返回该值", () => {

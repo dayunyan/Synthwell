@@ -1,18 +1,10 @@
 // src/preview/selection-capture.ts
-import type { WorkspaceLeaf, Menu } from "obsidian";
+import { Menu } from "obsidian";
+import type { WorkspaceLeaf } from "obsidian";
+import type { SelectionCache } from "./selection-cache.ts";
 
-export interface SelInfo { text: string; page: number; }
-
-/** 选区缓存:mouseup 时写,{button / 右键深抽}时读。纯值对象,可单测。 */
-export class SelectionCache {
-  private sel: SelInfo | null = null;
-  get(): SelInfo | null { return this.sel; }
-  set(sel: SelInfo): void { this.sel = sel; }
-  clear(): void { this.sel = null; }
-}
-
-/** 从选区锚点向上找页码:遍历祖先取 `dataset.pageNumber`(pdfjs `.page[data-page-number]` 有此属性)。
- *  找不到返回 null(调用方 fallback 1)。DOM 件,人工验(Task 1 已确认选择器)。 */
+/** 从选区锚点向上找页码:遍历祖先取 dataset.pageNumber(pdfjs `.page[data-page-number]` 有此属性)。
+ *  找不到返回 null(调用方 fallback 1)。 */
 export function findPageNumber(el: Element | null): number | null {
   let node: Element | null = el;
   while (node) {
@@ -27,15 +19,14 @@ export interface AttachOpts { onDeepExtract?: () => void; }
 
 /** 给预览 leaf 的 contentEl 挂两个被动 DOM 监听(零 monkey-patch):
  *  - mouseup:window.getSelection 取文本 + findPageNumber 定位页 → cache.set/clear
- *  - contextmenu:有缓存选区时,弹 Obsidian Menu「深抽这个知识点」→ onDeepExtract
+ *  - contextmenu(capture 阶段):有缓存选区时,弹 Obsidian Menu「深抽这个知识点」→ onDeepExtract
  *  返回 cleanup(摘除两个 listener)。
  *
- *  注:`obsidian` 包是纯类型(`main: ""`),运行时不可静态 import——`Menu` 在 contextmenu
- *  回调里动态 `await import("obsidian")` 取(同 document-source.ts 对 pdfjs 的处理),
- *  使本模块顶层零运行时 obsidian 依赖,SelectionCache 单测可在 node:test 下加载。 */
+ *  Menu 用静态 import(非动态 await import):esbuild bundle 时把 "obsidian" 作 external 解析,
+ *  运行时 require('obsidian') 可用;动态 import("obsidian") 在 Obsidian 运行时会抛
+ *  "Failed to resolve module specifier 'obsidian'"(obsidian 非 ES module)。SelectionCache
+ *  拆到独立纯模块,故本文件不被 node:test 加载,可自由静态 import obsidian。 */
 export function attachSelectionCapture(leaf: WorkspaceLeaf, cache: SelectionCache, opts: AttachOpts = {}): () => void {
-  // `leaf.view` 是 `View`(只有 `containerEl`);但原生 PDF view 是 ItemView 子类,运行时有 `contentEl`
-  // (Task 1 已验 `[data-page-number]` 在 contentEl 内)。这里 cast 取 contentEl,找不到退 containerEl。
   const view = leaf.view as (import("obsidian").View & { contentEl?: HTMLElement }) | null;
   const root = view?.contentEl ?? view?.containerEl ?? null;
   if (!root) return () => {};
@@ -46,30 +37,25 @@ export function attachSelectionCapture(leaf: WorkspaceLeaf, cache: SelectionCach
     if (!text) { cache.clear(); return; }
     const anchor = sel?.anchorNode;
     const startEl = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
-    const page = findPageNumber(startEl) ?? 1;  // fallback 1(Task 1 不成立时)
+    const page = findPageNumber(startEl) ?? 1;  // fallback 1
     cache.set({ text, page });
   };
 
-  const onContextMenu = async (ev: MouseEvent) => {
+  const onContextMenu = (ev: MouseEvent) => {
     const sel = cache.get();
     if (!sel || !opts.onDeepExtract) return;  // 无选区/无回调 → 让原生菜单通过
     ev.preventDefault();
     ev.stopPropagation();
-    const { Menu: ObsMenu } = await import("obsidian");
-    const menu = new ObsMenu();
+    const menu = new Menu();
     menu.addItem((i) => i.setTitle("深抽这个知识点").onClick(() => opts.onDeepExtract!()));
     menu.showAtPosition({ x: ev.clientX, y: ev.clientY });
   };
 
   root.addEventListener("mouseup", onMouseUp);
-  // #7:capture 阶段——原生 PDF viewer 的 bubble-phase contextmenu handler 会 stopPropagation 拦截,
-  // capture 先于它触发,preventDefault 才能压制原生菜单、显我们的「深抽」。
+  // capture 阶段:原生 PDF viewer 的 bubble-phase contextmenu 会 stopPropagation 拦截,capture 先触发。
   root.addEventListener("contextmenu", onContextMenu, true);
   return () => {
     root.removeEventListener("mouseup", onMouseUp);
     root.removeEventListener("contextmenu", onContextMenu, true);
   };
 }
-
-// 引 Menu 类型避免 unused(实际 new Menu() 在 contextmenu 回调里动态 import 取)。保留 type 供未来扩展。
-export type { Menu };

@@ -10,7 +10,7 @@ import { pageTextFromItems } from "../core/document/pdf-text.ts";
 import { confirmCost } from "../ui/confirm-modal.ts";
 import { LoadingNotice } from "../ui/loading-notice.ts";
 import type { ShiyueSettings } from "../settings.ts";
-import type { SelInfo } from "../preview/selection-capture.ts";
+import type { SelInfo } from "../preview/selection-cache.ts";
 
 /** 抽取胶水:build provider/noteGen/state,调 core/extraction。从 main.ts 抽出。
  *  数据源:batch 用 PdfDocumentSource(file) file 级重读;selection 上下文同源(±2 页)。
