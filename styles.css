@@ -16,9 +16,20 @@
   color: var(--text-muted); font-style: italic;
 }
 
-/* 图谱 logo(workspace/shiyue-workspace.ts 被动注入 graph contentEl 右上角) */
+/* 图谱 logo(Task 7:注入 .view-actions 头栏,inline,不再 absolute 浮位) */
 .shiyue-logo {
-  position: absolute; top: 0.5rem; right: 0.75rem; z-index: 10;
-  cursor: pointer; font-size: 1.2rem; opacity: 0.7; user-select: none;
+  cursor: pointer; font-size: 1.1rem; opacity: 0.75; user-select: none;
+  display: inline-flex; align-items: center; padding: 0 0.25rem;
 }
 .shiyue-logo:hover { opacity: 1; }
+
+/* 持续 loading Notice(ui/loading-notice.ts,#5/#8) */
+.shiyue-loading-notice { display: flex; align-items: center; gap: 0.5rem; }
+.shiyue-loading-text { font-size: 0.85rem; }
+.shiyue-loading-stop { margin-left: 0.25rem; padding: 0.1rem 0.5rem; font-size: 0.75rem; }
+.shiyue-spinner {
+  width: 0.9rem; height: 0.9rem; border-radius: 50%;
+  border: 2px solid var(--text-muted); border-top-color: transparent;
+  display: inline-block; animation: shiyue-spin 0.7s linear infinite;
+}
+@keyframes shiyue-spin { to { transform: rotate(360deg); } }
