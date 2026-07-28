@@ -62,10 +62,12 @@ export function attachSelectionCapture(leaf: WorkspaceLeaf, cache: SelectionCach
   };
 
   root.addEventListener("mouseup", onMouseUp);
-  root.addEventListener("contextmenu", onContextMenu);
+  // #7:capture 阶段——原生 PDF viewer 的 bubble-phase contextmenu handler 会 stopPropagation 拦截,
+  // capture 先于它触发,preventDefault 才能压制原生菜单、显我们的「深抽」。
+  root.addEventListener("contextmenu", onContextMenu, true);
   return () => {
     root.removeEventListener("mouseup", onMouseUp);
-    root.removeEventListener("contextmenu", onContextMenu);
+    root.removeEventListener("contextmenu", onContextMenu, true);
   };
 }
 
