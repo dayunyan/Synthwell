@@ -1,6 +1,6 @@
-import { estimateTokens, estimateCost } from "./usage.ts";
-import { parseLLMJson } from "./llm-json.ts";
-import type { LLMProvider } from "./llm-service.ts";
+import { estimateTokens, estimateCost } from "./core/llm/usage.ts";
+import { parseLLMJson } from "./core/llm/llm-json.ts";
+import type { LLMProvider } from "./core/llm/llm-service.ts";
 import type { NoteGenerator, NoteGeneratorOpts } from "./note-generator.ts";
 import type { DocumentSource } from "./document-source.ts";
 import type { ExtractionState } from "./extraction-state.ts";

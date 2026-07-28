@@ -41,7 +41,7 @@
 //    rendered TextLayerBuilder. .page[data-page-number] divs are in the DOM.
 import "./pdfjs-version-shim"; // MUST be first: re-asserts globalThis.pdfjsLib
 // to 5.4.530 BEFORE pdf_viewer.mjs reads `version` from it at module-load.
-import { FileView, Plugin, WorkspaceLeaf, TFile, Menu } from "obsidian";
+import { ItemView, Plugin, WorkspaceLeaf, TFile, Menu } from "obsidian";
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { PDFViewer, PDFLinkService, EventBus } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -56,8 +56,8 @@ import { buildAnchor, pageTextFromItems } from "./highlight";
 
 export const SHIYUE_PDF_VIEW = "shiyue-pdf-view";
 
-export class PdfView extends FileView {
-  // file: TFile | null — 由 FileView 提供(Plan 3 Task 6:不再自定义)
+export class PdfView extends ItemView {
+  file: TFile | null = null;
   private readonly plugin: Plugin;
   private doc: PDFDocumentProxy | null = null;
   // The pdfjs components. Constructed in setFile, torn down in onClose.
@@ -133,7 +133,6 @@ export class PdfView extends FileView {
         .onClick(() => (this.plugin as { extractSelection?: (v: PdfView) => void }).extractSelection?.(this)));
       menu.showAtMouseEvent(e);
     });
-    if (this.file) await this.setFile(this.file);  // Plan 3 Task 6: FileView 路由后 onOpen 加载文件
   }
 
   /** Build + log a text anchor for the current selection. No-op if no

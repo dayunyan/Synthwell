@@ -2,8 +2,8 @@ import { Plugin, TFile, FuzzySuggestModal, Notice, Modal } from "obsidian";
 import { PdfView, SHIYUE_PDF_VIEW } from "./pdf-view";
 import { ShiyueSettings, DEFAULT_SETTINGS } from "./settings";
 import { ShiyueSettingTab } from "./settings-tab";
-import { UsageTracker } from "./usage";
-import { OpenAICompatibleProvider } from "./llm-service";
+import { UsageTracker } from "./core/llm/usage";
+import { OpenAICompatibleProvider } from "./core/llm/llm-service";
 import { PdfDocumentSource } from "./document-source";
 import { NoteGenerator } from "./note-generator";
 import { ExtractionState } from "./extraction-state";
@@ -18,7 +18,6 @@ export default class ShiyuePlugin extends Plugin {
     await this.loadSettings();
 
     this.registerView(SHIYUE_PDF_VIEW, (leaf) => new PdfView(leaf, this));
-    this.registerExtensions(["pdf"], SHIYUE_PDF_VIEW);  // Plan 3 Task 6: 双击 .pdf → 拾阅 view
 
     this.addCommand({
       id: "open-pdf-in-shiyue",
@@ -76,8 +75,12 @@ export default class ShiyuePlugin extends Plugin {
   }
 
   async openPdf(file: TFile) {
-    const leaf = this.app.workspace.getLeaf(true);  // Plan 3 Task 6: 新 tab(E6:当前编辑区新 tab)
-    await leaf.openFile(file);  // FileView 路由 → onOpen → setFile
+    const leaf = this.app.workspace.getLeaf("split", "vertical");
+    await leaf.setViewState({ type: SHIYUE_PDF_VIEW, state: {} });
+    const view = leaf.view;
+    if (view instanceof PdfView) {
+      await view.setFile(file);
+    }
   }
 
   /** 对当前打开的 PDF 跑批处理抽取:取文本 → 分块 → 预估确认 → map 去重 → 生成笔记。 */

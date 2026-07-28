@@ -4,8 +4,8 @@
 // 会让 Node 尝试解析 types-only 的 obsidian 包(main:"")而 ERR_MODULE_NOT_FOUND,
 // 连带 settings.test.ts 失败。UI 与 obsidian 耦合,无单测,人工验。
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
-import { OpenAICompatibleProvider } from "./llm-service";
-import { UsageTracker } from "./usage";
+import { OpenAICompatibleProvider } from "./core/llm/llm-service";
+import { UsageTracker } from "./core/llm/usage";
 import type { ShiyueSettings } from "./settings";
 
 /** SecretStorage key id(小写字母+连字符,符合 SecretStorage 约定)。 */
