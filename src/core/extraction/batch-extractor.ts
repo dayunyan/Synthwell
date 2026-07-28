@@ -4,6 +4,8 @@ import type { LLMProvider } from "../llm/llm-service.ts";
 import type { NoteGenerator, NoteGeneratorOpts } from "./note-generator.ts";
 import type { DocumentSource } from "../document/document-source.ts";
 import type { ExtractionState } from "./extraction-state.ts";
+import { normalizePoint, type BatchPoint } from "./normalize.ts";
+export type { BatchPoint };
 
 export interface PageText { page: number; text: string; }
 export interface Chunk { text: string; pages: number[]; }
@@ -23,8 +25,6 @@ export function chunkPages(pages: PageText[], budgetTokens: number, _overlap = 0
   if (cur.pages.length) chunks.push(cur);
   return chunks;
 }
-
-export interface BatchPoint { title: string; summary: string; source_page: number; tags: string[]; related: string[]; }
 
 /** 标题相似度(字符 bigram 集合)。短串无 bigram 时退化为字符 unigram 集合。
  *  采用 Sørensen–Dice 系数 2*|A∩B|/(|A|+|B|):对共享前缀的中文标题打分高于纯 Jaccard,
@@ -62,21 +62,8 @@ export type ConfirmCostFn = (book: string, chunks: number, tokens: number, cost:
 
 /** 规范化 LLM 返回的单条知识点:补缺省、强转类型、丢弃无标题的残项。
  *  LLM 输出不可信(tags/related 可能缺失或为 null、source_page 可能是字符串),
- *  在 extractChunk 边界统一清洗,避免 dedupe 里 `[...p.tags]` 炸 "not iterable"。 */
-function normalizePoint(raw: any, fallbackPage: number): BatchPoint | null {
-  if (!raw || typeof raw !== "object") return null;
-  const title = typeof raw.title === "string" ? raw.title.trim() : "";
-  if (!title) return null;  // 无标题的知识点无意义 → 丢弃
-  const page = Number(raw.source_page);
-  return {
-    title,
-    summary: typeof raw.summary === "string" ? raw.summary.trim() : "",
-    source_page: Number.isFinite(page) ? page : fallbackPage,
-    tags: Array.isArray(raw.tags) ? raw.tags.filter((t: any) => typeof t === "string" && t.trim()) : [],
-    related: Array.isArray(raw.related) ? raw.related.filter((r: any) => typeof r === "string" && r.trim()) : [],
-  };
-}
-
+ *  在 extractChunk 边界统一清洗,避免 dedupe 里 `[...p.tags]` 炸 "not iterable"。
+ *  实现见 ./normalize.ts。 */
 export interface ExtractOpts { onProgress?: (done: number, total: number, points: number) => void; }
 
 export interface ExtractResult {
