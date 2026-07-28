@@ -10,20 +10,65 @@ export type { BatchPoint };
 export interface PageText { page: number; text: string; }
 export interface Chunk { text: string; pages: number[]; }
 
-/** 按 token budget 分块,页对齐(不跨页切,便于 source_page 准确)。
- *  overlap 暂不实现(spec 写 200,但页对齐下 overlap 复杂;先简化为无 overlap,后续优化)。 */
-export function chunkPages(pages: PageText[], budgetTokens: number, _overlap = 0): Chunk[] {
+/** 按 token budget 分块,页对齐 + 章节边界对齐。
+ *  长文档(totalTokens>longDocThreshold)且自然分块<3 时,降 budget=ceil(total/3) 强制≥3 块。
+ *  chapters:章首页码列表;在该页前若当前块非空则切(尽量同章不跨块)。 */
+export function chunkPages(pages: PageText[], budgetTokens: number, _overlap = 0, chapters: number[] = [], longDocThreshold = 10000): Chunk[] {
+  if (pages.length === 0) return [];
+  const totalTokens = pages.reduce((s, p) => s + estimateTokens(p.text), 0);
+  let budget = budgetTokens;
+  if (totalTokens > longDocThreshold) {
+    const natural = chunkByBudget(pages, budget, chapters);
+    if (natural.length < 3) budget = Math.max(1, Math.ceil(totalTokens / 3));
+  }
+  return chunkByBudget(pages, budget, chapters);
+}
+
+function chunkByBudget(pages: PageText[], budgetTokens: number, chapters: number[]): Chunk[] {
+  const bounds = new Set(chapters.filter((p) => p >= 1));
   const chunks: Chunk[] = [];
   let cur: Chunk = { text: "", pages: [] };
+  const push = () => { if (cur.pages.length) { chunks.push(cur); cur = { text: "", pages: [] }; } };
   for (const p of pages) {
     const pageTokens = estimateTokens(p.text);
-    if (cur.pages.length && estimateTokens(cur.text) + pageTokens > budgetTokens) {
-      chunks.push(cur); cur = { text: "", pages: [] };
-    }
+    const overBudget = cur.pages.length && estimateTokens(cur.text) + pageTokens > budgetTokens;
+    const atChapterStart = cur.pages.length && bounds.has(p.page);
+    if (overBudget || atChapterStart) push();
     cur.text += p.text; cur.pages.push(p.page);
   }
-  if (cur.pages.length) chunks.push(cur);
+  push();
   return chunks;
+}
+
+/** 兜底合成 1 个知识点(每块≥1 保底的第三层:prompt→重试→合成)。
+ *  title=首行或首 40 字;summary=首 ~120 字;source_page=chunk 首页;tags/related 空。 */
+export function synthesizePoint(chunk: Chunk): BatchPoint {
+  const text = chunk.text.trim();
+  const firstLine = text.split("\n")[0]?.trim() ?? "";
+  const title = (firstLine || text).slice(0, 40) || `第${chunk.pages[0]}页摘要`;
+  return {
+    title,
+    summary: text.slice(0, 120) || title,
+    source_page: chunk.pages[0],
+    tags: [],
+    related: [],
+  };
+}
+
+/** best-effort 从 PDF outline 取章首页码。无 outline / 解析失败 → [](退回纯页对齐)。 */
+async function chapterBoundaries(doc: any): Promise<number[]> {
+  try {
+    const outline = await doc.getOutline?.();
+    if (!Array.isArray(outline) || !outline.length) return [];
+    const pages: number[] = [];
+    for (const item of outline) {
+      const dest = item?.dest;
+      const ref = Array.isArray(dest) && dest.length ? dest[0] : null;
+      if (ref == null) continue;
+      try { const idx = await doc.getPageIndex(ref); pages.push(idx + 1); } catch { /* skip unresolvable */ }
+    }
+    return Array.from(new Set(pages)).sort((a, b) => a - b);
+  } catch { return []; }
 }
 
 /** 标题相似度(字符 bigram 集合)。短串无 bigram 时退化为字符 unigram 集合。

@@ -111,3 +111,41 @@ test("extractChunk: LLM 把数组包在对象里 {points:[...]} → 抽出数组
   assert.equal(pts.length, 1);
   assert.equal(pts[0].title, "点A");
 });
+
+import { chunkPages as chunkPagesAll, synthesizePoint } from "./batch-extractor.ts";
+import type { Chunk } from "./batch-extractor.ts";
+
+test("chunkPages: 章节边界处切(不跨章)", () => {
+  // 3 页,每页 ~4 token;budget 100;第 2 页是章首 → 在第 2 页前切
+  const pages = [{page:1,text:"a".repeat(16)},{page:2,text:"b".repeat(16)},{page:3,text:"c".repeat(16)}];
+  const chunks = chunkPagesAll(pages, 100, 0, [2]);
+  assert.equal(chunks.length, 2);
+  assert.deepEqual(chunks[0].pages, [1]);
+  assert.deepEqual(chunks[1].pages, [2, 3]);
+});
+test("chunkPages: 长文档(>threshold)且自然<3 → 降 budget 强制≥3", () => {
+  // 4 页,每页 ~1000 token(2000 字符);threshold=2000 → total 4000>2000,
+  // 自然 budget 10000 → 1 块(<3)→ 强制 budget=ceil(4000/3)=1334 → ≥3 块(页对齐需 ≥3 页)
+  const pages = [{page:1,text:"x".repeat(2000)},{page:2,text:"y".repeat(2000)},{page:3,text:"z".repeat(2000)},{page:4,text:"w".repeat(2000)}];
+  const chunks = chunkPagesAll(pages, 10000, 0, [], 2000);
+  assert.ok(chunks.length >= 3, `应≥3 块,实际 ${chunks.length}`);
+});
+test("chunkPages: 短文档不强制≥3(1 块)", () => {
+  const pages = [{page:1,text:"短"}];
+  assert.equal(chunkPagesAll(pages, 10000, 0, [], 4000).length, 1);
+});
+
+test("synthesizePoint: 兜底合成 1 点(title=首40字,page=chunk首页,tags/related空)", () => {
+  const chunk: Chunk = { text: "这是一段没有抽出知识点的文本内容,作为兜底。".repeat(3), pages: [5, 6] };
+  const p = synthesizePoint(chunk);
+  assert.equal(p.source_page, 5);
+  assert.deepEqual(p.tags, []);
+  assert.deepEqual(p.related, []);
+  assert.ok(p.title.length > 0 && p.title.length <= 40);
+  assert.ok(p.summary.length > 0);
+});
+test("synthesizePoint: 空文本 → title 用页码兜底", () => {
+  const p = synthesizePoint({ text: "   ", pages: [7] });
+  assert.equal(p.title, "第7页摘要");
+  assert.equal(p.source_page, 7);
+});
