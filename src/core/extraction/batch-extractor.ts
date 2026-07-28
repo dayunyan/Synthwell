@@ -109,7 +109,12 @@ export type ConfirmCostFn = (book: string, chunks: number, tokens: number, cost:
  *  LLM 输出不可信(tags/related 可能缺失或为 null、source_page 可能是字符串),
  *  在 extractChunk 边界统一清洗,避免 dedupe 里 `[...p.tags]` 炸 "not iterable"。
  *  实现见 ./normalize.ts。 */
-export interface ExtractOpts { onProgress?: (done: number, total: number, points: number) => void; }
+export interface ExtractOpts {
+  onProgress?: (done: number, total: number, points: number) => void;
+  onConfirmed?: () => void;        // #4:confirm 通过后调(controller 显 loading notice)
+  signal?: AbortSignal;
+}
+export interface ExtractChunkOpts { forceAtLeastOne?: boolean; signal?: AbortSignal; }
 
 export interface ExtractResult {
   count: number;       // 生成的知识点数
@@ -137,20 +142,29 @@ export class BatchExtractor {
   ) {
     this.app = app; this.llm = llm; this.noteGen = noteGen; this.noteOpts = noteOpts; this.pricing = pricing; this.confirmFn = confirmFn; this.state = state;
   }
-  /** 单块抽取:AI prompt(注入前文知识点 schema+摘要)+ parseLLMJson。返回知识点数组。 */
-  async extractChunk(book: string, chunk: Chunk, prior: { title: string; summary: string }[]): Promise<BatchPoint[]> {
-    const priorBlock = prior.length
-      ? prior.map(p => `- ${p.title} — ${p.summary}`).join("\n")
-      : "(无)";
+  /** 单块抽取:AI prompt(注入前文知识点 schema+摘要)+ parseLLMJson。返回知识点数组。
+   *  opts.forceAtLeastOne:prompt 加强制语,要求≥1 条。opts.signal:透传 llm.chat(取消线程)。
+   *  llm.chat 抛错(含 abort)→ catch 返回 [](extract 层兜底合成)。 */
+  async extractChunk(book: string, chunk: Chunk, prior: { title: string; summary: string }[], opts: ExtractChunkOpts = {}): Promise<BatchPoint[]> {
+    const priorBlock = prior.length ? prior.map(p => `- ${p.title} — ${p.summary}`).join("\n") : "(无)";
+    const forceLine = opts.forceAtLeastOne
+      ? "\n【重要:必须返回至少1条知识点,哪怕内容稀薄也提取最核心的一条。禁止返回空数组。】"
+      : "";
     const prompt = `你是知识抽取助手。从下面这段 PDF 文本(来自《${book}》第 ${chunk.pages[0]}-${chunk.pages[chunk.pages.length-1]} 页)提取离散知识点。
 每个知识点给:title(简短名词短语)、summary(2-4 句)、source_page(所在页码)、tags(2-3 个主题标签)、related(与本块或前文知识点中相关的标题列表)。
-只返回 JSON 数组,不要其他文字:[{"title","summary","source_page","tags","related"}]
+只返回 JSON 数组,不要其他文字:[{"title","summary","source_page","tags","related"}]${forceLine}
 
 【此前已抽取的知识点(只看 schema+摘要,别复述原文)】:
 ${priorBlock}
 
 文本:${chunk.text}`;
-    const raw = await this.llm.chat([{ role: "user", content: prompt }], { jsonMode: true, temperature: 0.2 });
+    let raw: string;
+    try {
+      raw = await this.llm.chat([{ role: "user", content: prompt }], { jsonMode: true, temperature: 0.2, signal: opts.signal });
+    } catch (e) {
+      console.warn(`[shiyue] 块抽取失败(将兜底):${e instanceof Error ? e.message : String(e)}`);
+      return [];
+    }
     const parsed = parseLLMJson<any>(raw);
     // 模型可能把数组包在对象里 {"points":[...]} / {"knowledge_points":[...]} / {"result":[...]}
     const arr: any[] = Array.isArray(parsed) ? parsed
@@ -159,14 +173,14 @@ ${priorBlock}
     return arr.map(p => normalizePoint(p, fallbackPage)).filter(Boolean) as BatchPoint[];
   }
 
-  /** 编排:取文本 → 分块 → 预估+确认 → map(顺序前文) → reduce 去重 → 生成笔记 → 状态记录。
+  /** 编排:取文本 → 分块(10k budget+长文≥3+章节对齐)→ 预估+确认 → map(顺序前文+每块≥1 保底+取消线程)→ reduce 去重 → 生成笔记 → 状态记录。
    *  返回 ExtractResult;count=0 时 message 说明卡在哪一段。 */
   async extract(source: DocumentSource, opts: ExtractOpts = {}): Promise<ExtractResult> {
     const doc = await source.getDocument();
     if (!doc) throw new Error("无法加载 PDF 文档");
     try {
       const file = source.getFile();
-      // 1. 取每页文本
+      // 1. 每页文本 + 章节边界
       const pages: PageText[] = [];
       for (let i = 1; i <= doc.numPages; i++) {
         const p = await doc.getPage(i);
@@ -174,30 +188,40 @@ ${priorBlock}
         pages.push({ page: i, text: tc.items.map((it: any) => it.str ?? "").join("") });
       }
       const totalChars = pages.reduce((s, p) => s + p.text.length, 0);
-      console.log(`[shiyue] 文本:${doc.numPages} 页,${totalChars} 字符`);
-      // 2. 分块(页对齐,默认 3000 token/块)
-      const chunks = chunkPages(pages, 3000);
+      const chapters = await chapterBoundaries(doc);
+      console.log(`[shiyue] 文本:${doc.numPages} 页,${totalChars} 字符;章节边界:${chapters.length ? chapters.join(",") : "(无 outline)"}`);
+      // 2. 分块(10k budget + 长文≥3 + 章节对齐)
+      const chunks = chunkPages(pages, 10000, 0, chapters);
       console.log(`[shiyue] 分块:${chunks.length} 块`);
       if (chunks.length === 0 || totalChars === 0) {
-        return { count: 0, chunks: chunks.length, cancelled: false,
-          message: "PDF 无可抽取文本(可能是扫描件/图片 PDF,pdfjs 取不到文本层)" };
+        return { count: 0, chunks: chunks.length, cancelled: false, message: "PDF 无可抽取文本(可能是扫描件/图片 PDF,pdfjs 取不到文本层)" };
       }
-      // 3. 预估花费 + 用户确认(块文本 + ~30% 前文上下文;输出粗估为输入的 30%)
+      // 3. 预估 + 确认
       const inputTokens = chunks.reduce((s, c) => s + estimateTokens(c.text) * 1.3, 0);
       const estCost = estimateCost(inputTokens, inputTokens * 0.3, this.pricing);
       if (!(await this.confirmFn(file.basename, chunks.length, Math.round(inputTokens), estCost))) {
         return { count: 0, chunks: chunks.length, cancelled: true, message: "用户取消" };
       }
-      // 4. map(顺序注入前文知识点,限最近 30 个,控 token)
+      opts.onConfirmed?.();  // #4:confirm 通过后 controller 显 loading notice
+      // 4. map(每块≥1 保底 + abort 检查)
       let all: BatchPoint[] = [];
       let prior: { title: string; summary: string }[] = [];
       for (let i = 0; i < chunks.length; i++) {
-        const pts = await this.extractChunk(file.basename, chunks[i], prior);
+        if (opts.signal?.aborted) return { count: all.length, chunks: chunks.length, cancelled: true, message: "用户取消" };
+        let pts = await this.extractChunk(file.basename, chunks[i], prior, { signal: opts.signal });
+        if (pts.length === 0 && !opts.signal?.aborted) {
+          pts = await this.extractChunk(file.basename, chunks[i], prior, { forceAtLeastOne: true, signal: opts.signal });
+        }
+        if (pts.length === 0 && !opts.signal?.aborted) {
+          pts = [synthesizePoint(chunks[i])];
+          console.log(`[shiyue] 块 ${i + 1}/${chunks.length} 兜底合成 1 点`);
+        }
         console.log(`[shiyue] 块 ${i + 1}/${chunks.length} → ${pts.length} 点`);
         all.push(...pts);
         prior = [...prior, ...pts.map(p => ({ title: p.title, summary: p.summary }))].slice(-30);
         opts.onProgress?.(i + 1, chunks.length, all.length);
       }
+      if (opts.signal?.aborted) return { count: 0, chunks: chunks.length, cancelled: true, message: "用户取消" };
       // 5. reduce 去重(标题相似 >0.8 合并)
       const deduped = dedupe(all, 0.8);
       console.log(`[shiyue] 去重:${all.length} → ${deduped.length} 点`);
@@ -214,7 +238,7 @@ ${priorBlock}
       if (this.state) await this.state.record(file.basename, file.path, deduped.map(p => p.title), this.noteOpts.model);
       if (deduped.length === 0) {
         return { count: 0, chunks: chunks.length, cancelled: false,
-          message: `LLM 未返回有效知识点(${chunks.length} 块全空——看控制台每块点数,可能模型未按 JSON 数组返回)` };
+          message: `LLM 未返回有效知识点(${chunks.length} 块全空——看控制台每块点数)` };
       }
       return { count: deduped.length, chunks: chunks.length, cancelled: false, message: "抽取完成" };
     } finally {

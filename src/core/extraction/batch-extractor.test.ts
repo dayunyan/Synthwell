@@ -149,3 +149,17 @@ test("synthesizePoint: 空文本 → title 用页码兜底", () => {
   assert.equal(p.title, "第7页摘要");
   assert.equal(p.source_page, 7);
 });
+
+test("extractChunk: forceAtLeastOne 时 prompt 含强制语", async () => {
+  let captured = "";
+  const llm: LLMProvider = { async chat(m){captured=m[0].content;return "[]";}, async *stream(){throw 0;}, abort(){} };
+  const be = new BatchExtractor({} as any, llm, {} as any, { notesPath:"x", model:"m" } as any, { inputPer1M:1, outputPer1M:2 });
+  await be.extractChunk("b.pdf", { text:"t", pages:[1] }, [], { forceAtLeastOne: true });
+  assert.ok(captured.includes("至少1条") || captured.includes("禁止返回空数组"));
+});
+test("extractChunk: llm.chat 抛错(含 abort)→ catch 返回 [] 不炸", async () => {
+  const llm: LLMProvider = { async chat(){throw new Error("aborted");}, async *stream(){throw 0;}, abort(){} };
+  const be = new BatchExtractor({} as any, llm, {} as any, { notesPath:"x", model:"m" } as any, { inputPer1M:1, outputPer1M:2 });
+  const pts = await be.extractChunk("b.pdf", { text:"t", pages:[1] }, [], { signal: new AbortController().signal });
+  assert.equal(pts.length, 0);  // 不抛,返回空
+});
