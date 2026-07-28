@@ -111,7 +111,7 @@ export type ConfirmCostFn = (book: string, chunks: number, tokens: number, cost:
  *  实现见 ./normalize.ts。 */
 export interface ExtractOpts {
   onProgress?: (done: number, total: number, points: number) => void;
-  onConfirmed?: () => void;        // #4:confirm 通过后调(controller 显 loading notice)
+  onConfirmed?: (totalChunks: number) => void;  // #4:confirm 通过后调,传总块数(controller 显 "0/N")
   signal?: AbortSignal;
 }
 export interface ExtractChunkOpts { forceAtLeastOne?: boolean; signal?: AbortSignal; }
@@ -202,13 +202,14 @@ ${priorBlock}
       if (!(await this.confirmFn(file.basename, chunks.length, Math.round(inputTokens), estCost))) {
         return { count: 0, chunks: chunks.length, cancelled: true, message: "用户取消" };
       }
-      opts.onConfirmed?.();  // #4:confirm 通过后 controller 显 loading notice
+      opts.onConfirmed?.(chunks.length);  // #4:confirm 通过后 controller 显 loading notice(传总块数)
       // 4. map(每块≥1 保底 + abort 检查)
       let all: BatchPoint[] = [];
       let prior: { title: string; summary: string }[] = [];
       for (let i = 0; i < chunks.length; i++) {
         if (opts.signal?.aborted) return { count: all.length, chunks: chunks.length, cancelled: true, message: "用户取消" };
-        let pts = await this.extractChunk(file.basename, chunks[i], prior, { signal: opts.signal });
+        opts.onProgress?.(i + 1, chunks.length, all.length);  // #4:块开始即显进度(LLM call 期间也见 x/t)
+      let pts = await this.extractChunk(file.basename, chunks[i], prior, { signal: opts.signal });
         if (pts.length === 0 && !opts.signal?.aborted) {
           pts = await this.extractChunk(file.basename, chunks[i], prior, { forceAtLeastOne: true, signal: opts.signal });
         }

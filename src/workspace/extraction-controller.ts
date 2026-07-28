@@ -34,7 +34,7 @@ export class ExtractionController {
     const source = new PdfDocumentSource(file, this.app, this.plugin);
     const r = await be.extract(source, {
       signal: ctrl.signal,
-      onConfirmed: () => loading.show(),                                    // #4:点「继续」后才显
+      onConfirmed: (total) => loading.show(`0/${total}`),                   // #4:点「继续」后才显,初始显 0/总块数
       onProgress: (d, t, p) => loading.update(`${d}/${t} → ${p} 点`),
     });
     loading.hide();

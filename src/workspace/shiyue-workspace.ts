@@ -99,8 +99,11 @@ export class ShiyueWorkspace implements PanelActions {
     const hasDoc = !!this.tracker.get() && this.isPreviewLeafValid();
     let target: WorkspaceLeaf;
     if (hasDoc) {
-      await this.app.workspace.setActiveLeaf(preview, { focus: false });
-      target = this.app.workspace.getLeaf(true) as WorkspaceLeaf;  // active split 内新 tab
+      // 在 preview 的 tab 组(parent=WorkspaceTabs)内新建 tab。createLeafInParent 的 .d.ts 窄标
+      // WorkspaceSplit,运行时收 WorkspaceParent;cast 绕过。index=children 末尾追加。
+      // (round-2 fix:getLeaf(true) 会落到主根 split,不在右栏预览 split。)
+      const parent = preview.parent as any;
+      target = this.app.workspace.createLeafInParent(parent as import("obsidian").WorkspaceSplit, parent?.children?.length ?? 0);
     } else {
       target = preview;  // 空 → 替换
     }
@@ -127,8 +130,14 @@ export class ShiyueWorkspace implements PanelActions {
   // ---- logo 注入(被动 DOM,在 graph view contentEl 右上角加 📖)----
   /** 注册 layout-change 监听 + 立即扫一次。plugin.registerEvent 管自动 cleanup。 */
   registerLogoInjector(): void {
-    this.plugin.registerEvent(this.app.workspace.on("layout-change", () => this.injectLogos()));
+    this.plugin.registerEvent(this.app.workspace.on("layout-change", () => { this.injectLogos(); this.syncPreviewValidity(); }));
     this.injectLogos();
+    this.syncPreviewValidity();
+  }
+
+  /** preview 关闭/失效时清 tracker → AI 面板按钮禁用(#2 round-2)。layout-change 时复查。 */
+  private syncPreviewValidity(): void {
+    if (this.tracker.get() && !this.isPreviewLeafValid()) this.tracker.set(null);
   }
 
   private injectLogos(): void {
