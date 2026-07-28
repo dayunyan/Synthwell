@@ -26,7 +26,7 @@ export class PdfDocumentSource implements DocumentSource {
     // 返回的 PDFDocumentProxy 由调用方负责 destroy()(批处理结束后释放)。
     if (this.doc) return this.doc;
     // 复用 spike 集成发现 #12:getResourcePath + fetch(走 webview 有权限层,readBinary 在 TCC 下 EPERM)
-    const { configureWorker } = await import("../../pdf-worker.ts");
+    const { configureWorker } = await import("./pdf-worker-config.ts");
     configureWorker(this.app, this.plugin);
     const resourcePath = this.app.vault.adapter.getResourcePath(this.file.path);
     const buf = await (await fetch(resourcePath)).arrayBuffer();
