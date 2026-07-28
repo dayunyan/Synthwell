@@ -1,5 +1,8 @@
 import type { LLMProvider, ChatMsg } from "../llm/llm-service.ts";
 import { parseLLMJson } from "../llm/llm-json.ts";
+import { sanitizeTag, splitTag } from "./normalize.ts";
+
+function unique<T>(a: T[]): T[] { return Array.from(new Set(a)); }
 
 export interface SelectionRelated { title: string; reason: string; }
 export interface SelectionPoint {
@@ -36,7 +39,9 @@ function normalizeSelectionPoint(raw: any, fallbackPage: number): SelectionPoint
     title,
     summary: typeof o.summary === "string" ? o.summary.trim() : "",
     source_page: Number.isFinite(page) ? page : fallbackPage,
-    tags: Array.isArray(o.tags) ? o.tags.filter((t: any) => typeof t === "string" && t.trim()) : [],
+    tags: Array.isArray(o.tags)
+      ? unique((o.tags as unknown[]).flatMap(splitTag).map(sanitizeTag).filter((s) => s.length > 0))
+      : [],
     related,
   };
 }
