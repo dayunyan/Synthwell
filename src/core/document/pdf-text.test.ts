@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { buildAnchor, resolveAnchor, pageTextFromItems } from "./highlight.ts";
+import { buildAnchor, resolveAnchor, pageTextFromItems } from "./pdf-text.ts";
 
 test("buildAnchor + resolveAnchor roundtrip on CJK text", () => {
   const page = "飞轮效应是指一个业务过程中的正向循环，它让强者愈强。";

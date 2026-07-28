@@ -4,12 +4,12 @@ import { ShiyueSettings, DEFAULT_SETTINGS } from "./settings";
 import { ShiyueSettingTab } from "./settings-tab";
 import { UsageTracker } from "./core/llm/usage";
 import { OpenAICompatibleProvider } from "./core/llm/llm-service";
-import { PdfDocumentSource } from "./document-source";
+import { PdfDocumentSource } from "./core/document/document-source";
 import { NoteGenerator } from "./core/extraction/note-generator";
 import { ExtractionState } from "./core/extraction/extraction-state";
 import { BatchExtractor } from "./core/extraction/batch-extractor";
 import { SelectionExtractor } from "./core/extraction/selection-extractor";
-import { pageTextFromItems } from "./highlight";
+import { pageTextFromItems } from "./core/document/pdf-text";
 
 export default class ShiyuePlugin extends Plugin {
   settings: ShiyueSettings = DEFAULT_SETTINGS;

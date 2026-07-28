@@ -52,7 +52,7 @@ import { PDFViewer, PDFLinkService, EventBus } from "pdfjs-dist/web/pdf_viewer.m
 // text-anchoring). See the setDocument note on pdf-view.ts line ~181.
 import { AnnotationEditorType, AnnotationMode } from "pdfjs-dist";
 import { configureWorker } from "./pdf-worker";
-import { buildAnchor, pageTextFromItems } from "./highlight";
+import { buildAnchor, pageTextFromItems } from "./core/document/pdf-text";
 
 export const SHIYUE_PDF_VIEW = "shiyue-pdf-view";
 
