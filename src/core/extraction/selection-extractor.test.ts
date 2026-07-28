@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { SelectionExtractor } from "./selection-extractor.ts";
-import type { LLMProvider, ChatMsg } from "./core/llm/llm-service.ts";
+import type { LLMProvider, ChatMsg } from "../llm/llm-service.ts";
 
 test("SelectionExtractor.extract: 组装 prompt(选中+上下文+已有标题+书名)→ 解析单点", async () => {
   let captured = "";

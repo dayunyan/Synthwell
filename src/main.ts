@@ -5,10 +5,10 @@ import { ShiyueSettingTab } from "./settings-tab";
 import { UsageTracker } from "./core/llm/usage";
 import { OpenAICompatibleProvider } from "./core/llm/llm-service";
 import { PdfDocumentSource } from "./document-source";
-import { NoteGenerator } from "./note-generator";
-import { ExtractionState } from "./extraction-state";
-import { BatchExtractor } from "./batch-extractor";
-import { SelectionExtractor } from "./selection-extractor";
+import { NoteGenerator } from "./core/extraction/note-generator";
+import { ExtractionState } from "./core/extraction/extraction-state";
+import { BatchExtractor } from "./core/extraction/batch-extractor";
+import { SelectionExtractor } from "./core/extraction/selection-extractor";
 import { pageTextFromItems } from "./highlight";
 
 export default class ShiyuePlugin extends Plugin {

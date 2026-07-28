@@ -1,5 +1,5 @@
-import type { LLMProvider, ChatMsg } from "./core/llm/llm-service.ts";
-import { parseLLMJson } from "./core/llm/llm-json.ts";
+import type { LLMProvider, ChatMsg } from "../llm/llm-service.ts";
+import { parseLLMJson } from "../llm/llm-json.ts";
 
 export interface SelectionRelated { title: string; reason: string; }
 export interface SelectionPoint {

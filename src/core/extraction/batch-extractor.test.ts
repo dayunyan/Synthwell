@@ -52,7 +52,7 @@ test("dedupe: 标题不同都保留", () => {
 });
 
 import { BatchExtractor } from "./batch-extractor.ts";
-import type { LLMProvider, ChatMsg } from "./core/llm/llm-service.ts";
+import type { LLMProvider, ChatMsg } from "../llm/llm-service.ts";
 
 test("extractChunk: 调 LLM + 解析 JSON 数组 + 注入前文知识点", async () => {
   let captured = "";

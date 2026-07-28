@@ -1,8 +1,8 @@
-import { estimateTokens, estimateCost } from "./core/llm/usage.ts";
-import { parseLLMJson } from "./core/llm/llm-json.ts";
-import type { LLMProvider } from "./core/llm/llm-service.ts";
+import { estimateTokens, estimateCost } from "../llm/usage.ts";
+import { parseLLMJson } from "../llm/llm-json.ts";
+import type { LLMProvider } from "../llm/llm-service.ts";
 import type { NoteGenerator, NoteGeneratorOpts } from "./note-generator.ts";
-import type { DocumentSource } from "./document-source.ts";
+import type { DocumentSource } from "../../document-source.ts";
 import type { ExtractionState } from "./extraction-state.ts";
 
 export interface PageText { page: number; text: string; }

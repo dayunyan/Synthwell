@@ -1,4 +1,4 @@
-import { ensureFolder, dirOf } from "./vault-fs.ts";
+import { ensureFolder, dirOf } from "../../vault-fs.ts";
 
 export interface ExtractedRecord { hash: string; point_titles: string[]; model: string; extracted_at: string; }
 
