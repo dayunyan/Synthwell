@@ -43,3 +43,24 @@ test("SelectionExtractor.extract: 缺 title 或 related 非数组 → 归一,不
   const pt = await se.extract("b.pdf", "选中", 2, "上下文", []);
   assert.equal(pt, null);  // 无 title → 丢弃
 });
+
+test("SelectionExtractor.extract: signal 透传 llm.chat opts", async () => {
+  let capturedOpts: any = undefined;
+  const llm: LLMProvider = {
+    async chat(_m, o) { capturedOpts = o; return JSON.stringify({ title: "点A", summary: "s", source_page: 1, tags: [], related: [] }); },
+    async *stream() { throw 0; }, abort() {},
+  };
+  const se = new SelectionExtractor(llm);
+  const ctrl = new AbortController();
+  await se.extract("b.pdf", "选中", 1, "上下文", [], ctrl.signal);
+  assert.equal(capturedOpts.signal, ctrl.signal);
+});
+
+test("SelectionExtractor.extract: abort(signal.aborted)→ chat 抛 → 返回 null(不抛)", async () => {
+  const ctrl = new AbortController();
+  ctrl.abort();
+  const llm: LLMProvider = { async chat() { throw new Error("aborted"); }, async *stream() { throw 0; }, abort() {} };
+  const se = new SelectionExtractor(llm);
+  const pt = await se.extract("b.pdf", "选中", 1, "上下文", [], ctrl.signal);
+  assert.equal(pt, null);
+});

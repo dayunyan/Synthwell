@@ -51,7 +51,7 @@ function normalizeSelectionPoint(raw: any, fallbackPage: number): SelectionPoint
 export class SelectionExtractor {
   private llm: LLMProvider;
   constructor(llm: LLMProvider) { this.llm = llm; }
-  async extract(book: string, selected: string, page: number, contextText: string, existingTitles: string[]): Promise<SelectionPoint | null> {
+  async extract(book: string, selected: string, page: number, contextText: string, existingTitles: string[], signal?: AbortSignal): Promise<SelectionPoint | null> {
     const titlesBlock = existingTitles.length ? existingTitles.map(t => `- ${t}`).join("\n") : "(无)";
     const prompt = `你是知识抽取助手。用户从《${book}》第 ${page} 页选中了一段,想把它抽成一个知识点笔记。
 基于选中段 + 上下文,提取一个知识点:title(名词短语)、summary(2-4 句)、source_page(所在页码)、tags(2-3 个主题标签)。
@@ -62,7 +62,13 @@ export class SelectionExtractor {
 上下文(第 ${Math.max(1, page - 2)}-${page + 2} 页):${contextText}
 已有知识点:
 ${titlesBlock}`;
-    const raw = await this.llm.chat([{ role: "user", content: prompt }], { jsonMode: true, temperature: 0.2 });
+    let raw: string;
+    try {
+      raw = await this.llm.chat([{ role: "user", content: prompt }], { jsonMode: true, temperature: 0.2, signal });
+    } catch (e) {
+      if (signal?.aborted) return null;  // 取消 → null(controller 不报错)
+      throw e;  // 其他错抛出
+    }
     const parsed = parseLLMJson<any>(raw);
     if (parsed == null) return null;
     return normalizeSelectionPoint(parsed, page);
