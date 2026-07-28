@@ -5,3 +5,6 @@ dist/
 *.log
 test-vault/
 docs/superpowers/spike/shiyue-spike-build.zip
+
+.DS_Store
+data.json
