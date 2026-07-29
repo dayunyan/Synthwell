@@ -33,3 +33,24 @@
   display: inline-block; animation: shiyue-spin 0.7s linear infinite;
 }
 @keyframes shiyue-spin { to { transform: rotate(360deg); } }
+
+/* 选区浮「深读」按钮(preview/selection-capture.ts,ADR-0004:替代右键菜单接管,
+ * 原生 PDF 右键菜单零劫持)。风格全用 Obsidian CSS 变量,随主题。 */
+.shiyue-float-deepread {
+  position: fixed;
+  z-index: var(--layer-popover, 100);
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.shiyue-float-deepread:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}

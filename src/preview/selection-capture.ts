@@ -1,7 +1,7 @@
 // src/preview/selection-capture.ts
-import { Menu } from "obsidian";
 import type { WorkspaceLeaf } from "obsidian";
 import type { SelectionCache } from "./selection-cache.ts";
+import { computeFloatPosition, FloatVisibility } from "./selection-float.ts";
 
 /** 从选区锚点向上找页码:遍历祖先取 dataset.pageNumber(pdfjs `.page[data-page-number]` 有此属性)。
  *  找不到返回 null(调用方 fallback 1)。 */
@@ -17,45 +17,94 @@ export function findPageNumber(el: Element | null): number | null {
 
 export interface AttachOpts { onDeepExtract?: () => void; }
 
-/** 给预览 leaf 的 contentEl 挂两个被动 DOM 监听(零 monkey-patch):
- *  - mouseup:window.getSelection 取文本 + findPageNumber 定位页 → cache.set/clear
- *  - contextmenu(capture 阶段):有缓存选区时,弹 Obsidian Menu「深抽这个知识点」→ onDeepExtract
- *  返回 cleanup(摘除两个 listener)。
+/** attachSelectionCapture 返回的句柄:detach 摘监听+移除浮按钮;setExtracting 协同深抽进行中隐藏。 */
+export interface SelectionCaptureHandle {
+  detach: () => void;
+  setExtracting: (extracting: boolean) => void;
+}
+
+/** 给预览 leaf 的 contentEl 挂被动 DOM 监听(零 monkey-patch),选区后浮「深读」按钮就地触发深抽。
+ *  - mouseup:window.getSelection 取文本 + findPageNumber 定位页 → cache.set/clear;有选区 → 浮按钮定位显示
+ *  - pointerdown(document capture):点别处/开始新选区 → 藏浮按钮(不碰 cache,面板按钮仍可读)
+ *  - 浮按钮 click:藏按钮 → onDeepExtract(与 AI 面板「选区知识点提取」同路径 extractSelection)
+ *  - setExtracting(深抽进行中):FloatVisibility 闸住,浮按钮隐藏,不重复触发
+ *  原生 PDF viewer 右键菜单完整保留:不再 contextmenu preventDefault/stopPropagation(ADR-0004)。
  *
- *  Menu 用静态 import(非动态 await import):esbuild bundle 时把 "obsidian" 作 external 解析,
- *  运行时 require('obsidian') 可用;动态 import("obsidian") 在 Obsidian 运行时会抛
- *  "Failed to resolve module specifier 'obsidian'"(obsidian 非 ES module)。SelectionCache
- *  拆到独立纯模块,故本文件不被 node:test 加载,可自由静态 import obsidian。 */
-export function attachSelectionCapture(leaf: WorkspaceLeaf, cache: SelectionCache, opts: AttachOpts = {}): () => void {
+ *  本文件用 DOM API(document/window) + 纯模块 selection-float.ts;obsidian 仅 type-only import。
+ *  纯定位/可见性逻辑在 selection-float.ts(node:test 可加载单测);本文件为 DOM 胶水,不直接单测。 */
+export function attachSelectionCapture(leaf: WorkspaceLeaf, cache: SelectionCache, opts: AttachOpts = {}): SelectionCaptureHandle {
   const view = leaf.view as (import("obsidian").View & { contentEl?: HTMLElement }) | null;
   const root = view?.contentEl ?? view?.containerEl ?? null;
-  if (!root) return () => {};
+  if (!root) return { detach: () => {}, setExtracting: () => {} };
+
+  const vis = new FloatVisibility();
+  let btn: HTMLButtonElement | null = null;
+
+  const ensureBtn = (): HTMLButtonElement => {
+    if (btn) return btn;
+    const b = document.body.createEl("button", { cls: "shiyue-float-deepread" });
+    b.setText("深读");
+    b.style.visibility = "hidden";   // 藏态仍占布局,offsetWidth 可测
+    b.style.pointerEvents = "none";
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      hideBtn();
+      opts.onDeepExtract?.();
+    });
+    btn = b;
+    return b;
+  };
+  const hideBtn = (): void => {
+    if (btn) { btn.style.visibility = "hidden"; btn.style.pointerEvents = "none"; }
+  };
+  const showBtn = (): void => {
+    const sel = window.getSelection();
+    const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+    if (!range) { hideBtn(); return; }
+    const r = range.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) { hideBtn(); return; }   // 折叠选区
+    const b = ensureBtn();
+    const { left, top } = computeFloatPosition(
+      { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height },
+      b.offsetWidth, b.offsetHeight, window.innerWidth, window.innerHeight);
+    b.style.left = `${left}px`;
+    b.style.top = `${top}px`;
+    b.style.visibility = "visible";
+    b.style.pointerEvents = "auto";
+  };
+  const refresh = (): void => { if (vis.visible()) showBtn(); else hideBtn(); };
 
   const onMouseUp = () => {
     const sel = window.getSelection();
     const text = sel?.toString().trim() ?? "";
-    if (!text) { cache.clear(); return; }
+    if (!text) { cache.clear(); vis.setSelection(null); refresh(); return; }
     const anchor = sel?.anchorNode;
     const startEl = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
     const page = findPageNumber(startEl) ?? 1;  // fallback 1
-    cache.set({ text, page });
+    const info = { text, page };
+    cache.set(info);
+    vis.setSelection(info);
+    refresh();
   };
 
-  const onContextMenu = (ev: MouseEvent) => {
-    const sel = cache.get();
-    if (!sel || !opts.onDeepExtract) return;  // 无选区/无回调 → 让原生菜单通过
-    ev.preventDefault();
-    ev.stopPropagation();
-    const menu = new Menu();
-    menu.addItem((i) => i.setTitle("深抽这个知识点").onClick(() => opts.onDeepExtract!()));
-    menu.showAtPosition({ x: ev.clientX, y: ev.clientY });
+  // 点浮按钮 → 让 click → onDeepExtract;点预览内(新选区/点击)→ 让 mouseup 处理(避免拖选时闪烁);
+  // 点别处(面板/设置等预览外)→ 藏浮按钮(ADR-0004「点别处」消失时机)。不动 cache。
+  const onPointerDown = (ev: PointerEvent) => {
+    const t = ev.target;
+    if (t instanceof Node && btn?.contains(t)) return;
+    if (t instanceof Node && root.contains(t)) return;
+    hideBtn();
   };
 
   root.addEventListener("mouseup", onMouseUp);
-  // capture 阶段:原生 PDF viewer 的 bubble-phase contextmenu 会 stopPropagation 拦截,capture 先触发。
-  root.addEventListener("contextmenu", onContextMenu, true);
-  return () => {
-    root.removeEventListener("mouseup", onMouseUp);
-    root.removeEventListener("contextmenu", onContextMenu, true);
+  document.addEventListener("pointerdown", onPointerDown, true);
+  return {
+    detach: () => {
+      root.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      btn?.remove();
+      btn = null;
+    },
+    setExtracting: (extracting: boolean) => { vis.setExtracting(extracting); refresh(); },
   };
 }

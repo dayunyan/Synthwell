@@ -1,7 +1,7 @@
 // src/workspace/shiyue-workspace.ts
 import { App, Plugin, TFile, FuzzySuggestModal, Notice, WorkspaceLeaf } from "obsidian";
 import { SelectionCache, type SelInfo } from "../preview/selection-cache.ts";
-import { attachSelectionCapture } from "../preview/selection-capture.ts";
+import { attachSelectionCapture, type SelectionCaptureHandle } from "../preview/selection-capture.ts";
 import { PreviewTracker } from "./preview-tracker.ts";
 import { ExtractionController } from "./extraction-controller.ts";
 import type { ShiyueSettings } from "../settings.ts";
@@ -35,7 +35,7 @@ export class ShiyueWorkspace implements PanelActions {
   private controller: ExtractionController;
   private previewLeaf: WorkspaceLeaf | null = null;
   private aiLeaf: WorkspaceLeaf | null = null;
-  private detachCapture: (() => void) | null = null;
+  private captureHandle: SelectionCaptureHandle | null = null;
 
   constructor(app: App, plugin: Plugin, settings: () => ShiyueSettings, aiViewType: string) {
     this.app = app; this.plugin = plugin; this.settings = settings; this.aiViewType = aiViewType;
@@ -58,18 +58,22 @@ export class ShiyueWorkspace implements PanelActions {
     if (!file) { new Notice("没有打开的 PDF"); return; }
     const sel = this.cache.get();
     if (!sel) { new Notice("请先在 PDF 中选中一段文字", 4000); return; }
-    await this.controller.extractSelection(file, sel);
+    this.captureHandle?.setExtracting(true);   // 深抽进行中:藏浮按钮,不重复触发
+    try { await this.controller.extractSelection(file, sel); }
+    finally { this.captureHandle?.setExtracting(false); }
   }
 
   // ---- 分屏 ----
-  /** 确保右侧分屏存在(上 preview / 下 ai)。幂等:已存在则聚焦,preview 失效则重建。 */
+  /** 确保右侧分屏存在(上 preview / 下 ai)。幂等:已存在则聚焦,preview 失效则重建。
+   *  不 toggle——纯 "ensure exists"。logo 点击走 toggleShiyueSplit。 */
   async ensureShiyueSplit(): Promise<void> {
     const existingAi = this.app.workspace.getLeavesOfType(this.aiViewType)[0] ?? null;
     if (existingAi) {
       this.aiLeaf = existingAi;
       await this.app.workspace.setActiveLeaf(existingAi, { focus: true });
       if (!this.isPreviewLeafValid()) {
-        // preview 被关:在 ai 上方(horizontal split, before=true)重建
+        // preview 真被关(detach,containerEl 已断):在 ai 上方(horizontal split, before=true)重建。
+        // 空/刚建预览 leaf 仍存活 → 不重建 → openInShiyue 走替换路径(Bug 3 修复)。
         this.previewLeaf = this.app.workspace.createLeafBySplit(existingAi, "horizontal", true);
       }
       return;
@@ -84,10 +88,33 @@ export class ShiyueWorkspace implements PanelActions {
     // preview 尚无文件,不挂选区捕获(等 openInShiyue 的 openFile 后 view 稳定再挂)
   }
 
-  /** preview 是否仍在工作区(已打开文件时是 'pdf' leaf)。
-   *  本版本 obsidian 无 Workspace.getLeaves(),用 getLeavesOfType('pdf') 含不含本 ref 判断。 */
+  /** logo 点击:toggle 右侧两屏。已存在 → 收起(detach 预览 + AI leaf);不存在 → ensure。
+   *  收起后 layout-change 会让 syncPreviewValidity 复查;这里同步清 tracker 让按钮立即禁用。 */
+  async toggleShiyueSplit(): Promise<void> {
+    const existingAi = this.app.workspace.getLeavesOfType(this.aiViewType)[0] ?? null;
+    if (existingAi || this.isPreviewLeafValid()) {
+      // 收起右栏整体
+      this.captureHandle?.detach();
+      this.captureHandle = null;
+      this.previewLeaf?.detach();
+      existingAi?.detach();
+      this.previewLeaf = null;
+      this.aiLeaf = null;
+      this.tracker.set(null);  // 立即禁用 AI 面板按钮(下一次 layout-change 也会复查)
+      return;
+    }
+    await this.ensureShiyueSplit();
+  }
+
+  /** preview leaf 是否仍存活在工作区 DOM 中。
+   *
+   *  用 `view.containerEl.isConnected` 而非 `getLeavesOfType('pdf').includes`:
+   *  后者对**空 / 刚建**预览 leaf(尚无文件,非 'pdf' view 类型)返 false →
+   *  `ensureShiyueSplit` 每次走 recreate 分支堆叠新 leaf(Bug 1+3 同根因)。
+   *  containerEl 在 leaf detach 后会被移出 DOM → isConnected=false;空 leaf 仍连着 → true。
+   *  (本版本 obsidian 无 Workspace.getLeaves();leaf存活检查走 DOM 连通性。) */
   private isPreviewLeafValid(): boolean {
-    return !!this.previewLeaf && this.app.workspace.getLeavesOfType("pdf").includes(this.previewLeaf);
+    return !!this.previewLeaf && !!this.previewLeaf.view?.containerEl?.isConnected;
   }
 
   // ---- 加载文件 ----
@@ -113,16 +140,16 @@ export class ShiyueWorkspace implements PanelActions {
     this.tracker.set(file);
   }
 
-  /** 给 preview leaf 的 contentEl 挂 mouseup(→cache)+ contextmenu(→深抽 Menu)。 */
+  /** 给 preview leaf 的 contentEl 挂 mouseup(→cache + 浮「深读」按钮)+ pointerdown(藏按钮)。 */
   private attachPreviewCapture(): void {
-    this.detachCapture?.();
-    this.detachCapture = null;
+    this.captureHandle?.detach();
+    this.captureHandle = null;
     const leaf = this.previewLeaf;
     // leaf.view 是 View(只有 containerEl);原生 PDF view 是 ItemView 子类,运行时有 contentEl
     const view = leaf?.view as (import("obsidian").View & { contentEl?: HTMLElement }) | null;
     const root = view?.contentEl ?? view?.containerEl ?? null;
     if (!root) return;
-    this.detachCapture = attachSelectionCapture(leaf!, this.cache, {
+    this.captureHandle = attachSelectionCapture(leaf!, this.cache, {
       onDeepExtract: () => { void this.extractSelection(); },
     });
   }
@@ -150,7 +177,7 @@ export class ShiyueWorkspace implements PanelActions {
       const btn = actions.createEl("div", { attr: { [SHIYUE_LOGO_ATTR]: "" }, cls: "shiyue-logo" });
       actions.insertBefore(btn, actions.firstChild);  // prepend → 动作区最左
       btn.setText("📖");
-      btn.onclick = () => { void this.ensureShiyueSplit(); };
+      btn.onclick = () => { void this.toggleShiyueSplit(); };
     }
   }
 
@@ -163,7 +190,7 @@ export class ShiyueWorkspace implements PanelActions {
   }
 
   /** 卸载时摘监听(main.ts onunload 调)。 */
-  destroy(): void { this.detachCapture?.(); this.detachCapture = null; }
+  destroy(): void { this.captureHandle?.detach(); this.captureHandle = null; }
 }
 
 class ShiyuePdfPickerModal extends FuzzySuggestModal<TFile> {
