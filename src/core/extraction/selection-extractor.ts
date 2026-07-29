@@ -1,15 +1,14 @@
 import type { LLMProvider, ChatMsg } from "../llm/llm-service.ts";
 import { parseLLMJson } from "../llm/llm-json.ts";
-import { sanitizeTag, splitTag } from "./normalize.ts";
+import { sanitizeTag, splitTag, normalizeRelated, type RelatedRef } from "./normalize.ts";
 
 function unique<T>(a: T[]): T[] { return Array.from(new Set(a)); }
 
-export interface SelectionRelated { title: string; reason: string; }
 export interface SelectionPoint {
   title: string; summary: string;
   source_page: number;
   tags: string[];
-  related: SelectionRelated[];
+  related: RelatedRef[];
 }
 
 /** 从 LLM 返回里抠出单个点对象:裸对象 / {point:{...}} / [{}]。
@@ -31,10 +30,7 @@ function normalizeSelectionPoint(raw: any, fallbackPage: number): SelectionPoint
   const title = typeof o.title === "string" ? o.title.trim() : "";
   if (!title) return null;
   const page = Number(o.source_page);
-  const related: SelectionRelated[] = Array.isArray(o.related)
-    ? o.related.filter((r: any) => r && typeof r.title === "string" && r.title.trim())
-      .map((r: any) => ({ title: String(r.title).trim(), reason: typeof r.reason === "string" ? r.reason.trim() : "" }))
-    : [];
+  const related: RelatedRef[] = normalizeRelated(o.related);
   return {
     title,
     summary: typeof o.summary === "string" ? o.summary.trim() : "",

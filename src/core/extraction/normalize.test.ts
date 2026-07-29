@@ -43,3 +43,22 @@ test("normalizePoint: tags 缺/非数组 → []", () => {
   assert.deepEqual(normalizePoint({ title: "T" }, 1)!.tags, []);
   assert.deepEqual(normalizePoint({ title: "T", tags: "x" }, 1)!.tags, []);
 });
+
+test("normalizePoint: related 为 {title,reason}[] 时保留(title+reason)", () => {
+  const p = normalizePoint({ title: "T", related: [{ title: "网络效应", reason: "都讲平台价值" }, { title: "飞轮", reason: "" }] }, 1);
+  assert.deepEqual(p!.related, [{ title: "网络效应", reason: "都讲平台价值" }, { title: "飞轮", reason: "" }]);
+});
+
+test("normalizePoint: related 退化——LLM 仍返纯标题字符串 → {title, reason:''}", () => {
+  const p = normalizePoint({ title: "T", related: ["网络效应", "  飞轮  ", ""] }, 1);
+  assert.deepEqual(p!.related, [{ title: "网络效应", reason: "" }, { title: "飞轮", reason: "" }]);
+});
+
+test("normalizePoint: related 缺/非数组/残项 → []", () => {
+  assert.deepEqual(normalizePoint({ title: "T" }, 1)!.related, []);
+  assert.deepEqual(normalizePoint({ title: "T", related: null }, 1)!.related, []);
+  assert.deepEqual(normalizePoint({ title: "T", related: "x" }, 1)!.related, []);
+  // 残项:无 title 的对象、非对象、空标题 → 丢弃;reason 非 string → ""
+  const p = normalizePoint({ title: "T", related: [{ reason: "无标题" }, 123, { title: "  ", reason: "x" }, { title: "好", reason: 9 }] }, 1);
+  assert.deepEqual(p!.related, [{ title: "好", reason: "" }]);
+});

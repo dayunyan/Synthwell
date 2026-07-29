@@ -4,7 +4,7 @@ import type { LLMProvider } from "../llm/llm-service.ts";
 import type { NoteGenerator, NoteGeneratorOpts } from "./note-generator.ts";
 import type { DocumentSource } from "../document/document-source.ts";
 import type { ExtractionState } from "./extraction-state.ts";
-import { normalizePoint, type BatchPoint } from "./normalize.ts";
+import { normalizePoint, type BatchPoint, type RelatedRef } from "./normalize.ts";
 export type { BatchPoint };
 
 export interface PageText { page: number; text: string; }
@@ -88,6 +88,13 @@ export function jaccard(a: string, b: string): number {
   return (2 * inter) / (sa.size + sb.size);
 }
 
+/** 合并关联列表:按 title 去重(先出现的理由优先保留——理由是 AI 明确判过的强关联,不覆盖)。 */
+function mergeRelated(a: RelatedRef[], b: RelatedRef[]): RelatedRef[] {
+  const map = new Map<string, RelatedRef>();
+  for (const r of [...a, ...b]) if (!map.has(r.title)) map.set(r.title, r);
+  return [...map.values()];
+}
+
 /** 去重:标题 Jaccard > threshold 合并(保留更长 summary,合并 tags/related,source_page 取较早的)。 */
 export function dedupe(points: BatchPoint[], threshold = 0.8): BatchPoint[] {
   const out: BatchPoint[] = [];
@@ -97,7 +104,7 @@ export function dedupe(points: BatchPoint[], threshold = 0.8): BatchPoint[] {
       if (p.summary.length > dup.summary.length) dup.summary = p.summary;
       dup.source_page = Math.min(dup.source_page, p.source_page);
       dup.tags = [...new Set([...dup.tags, ...p.tags])];
-      dup.related = [...new Set([...dup.related, ...p.related])];
+      dup.related = mergeRelated(dup.related, p.related);
     } else { out.push({ ...p, tags: [...p.tags], related: [...p.related] }); }
   }
   return out;
@@ -151,8 +158,8 @@ export class BatchExtractor {
       ? "\n【重要:必须返回至少1条知识点,哪怕内容稀薄也提取最核心的一条。禁止返回空数组。】"
       : "";
     const prompt = `你是知识抽取助手。从下面这段 PDF 文本(来自《${book}》第 ${chunk.pages[0]}-${chunk.pages[chunk.pages.length-1]} 页)提取离散知识点。
-每个知识点给:title(简短名词短语)、summary(2-4 句)、source_page(所在页码)、tags(2-3 个主题标签)、related(与本块或前文知识点中相关的标题列表)。
-只返回 JSON 数组,不要其他文字:[{"title","summary","source_page","tags","related"}]${forceLine}
+每个知识点给:title(简短名词短语)、summary(2-4 句)、source_page(所在页码)、tags(2-3 个主题标签)、related(与本块或前文知识点中相关的标题,每条附一句关联理由)。
+只返回 JSON 数组,不要其他文字:[{"title","summary","source_page","tags","related":[{"title","reason"}]}]${forceLine}
 
 【此前已抽取的知识点(只看 schema+摘要,别复述原文)】:
 ${priorBlock}
@@ -231,7 +238,7 @@ ${priorBlock}
         const pageText = pages.find(pg => pg.page === p.source_page)?.text ?? "";
         await this.noteGen.generate({
           title: p.title, summary: p.summary, source_pdf: file.basename, source_page: p.source_page,
-          source_text: pageText, tags: p.tags, related: p.related,
+          source_text: pageText, tags: p.tags, related: p.related.map(r => r.title), related_reasons: p.related,
           model: this.noteOpts.model, extraction_mode: "batch",
         });
       }

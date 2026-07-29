@@ -7,7 +7,7 @@ export interface KnowledgePoint {
   source_text: string;
   tags: string[];
   related: string[];
-  related_reasons?: { title: string; reason: string }[];  // 选区抽给的理由(body 用;批处理无)
+  related_reasons?: { title: string; reason: string }[];  // 关联理由(body 的 ## 关联 显「[[title]] — reason」;batch 与 selection 统一带)
   model: string;
   extraction_mode: "batch" | "selection";
 }
@@ -23,7 +23,7 @@ export function renderNote(p: KnowledgePoint, extractedAt: string): string {
   // 再转义双引号,最后换行→空格(单行标量)。
   const fmText = p.source_text.slice(0, 200).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ");
   const lines: string[] = ["---"];
-  lines.push("synthwell_type: knowledge_point");
+  lines.push("shiyue_type: knowledge_point");
   lines.push(`source_pdf: "[[${p.source_pdf}]]"`);
   lines.push(`source_page: ${p.source_page}`);
   lines.push(`source_text: "${fmText}"`);

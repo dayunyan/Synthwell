@@ -17,7 +17,7 @@ test("renderNote: schema 正确(frontmatter + 原文完整 + 关联 backlink)", 
     model: "deepseek-v4-flash", extraction_mode: "batch",
   }, "2026-07-27");
   assert.ok(md.startsWith("---\n"));
-  assert.ok(md.includes("synthwell_type: knowledge_point"));
+  assert.ok(md.includes("shiyue_type: knowledge_point"));
   assert.ok(md.includes('source_pdf: "[[增长策略.pdf]]"'));
   assert.ok(md.includes("source_page: 42"));
   assert.ok(md.includes("source_text:"));

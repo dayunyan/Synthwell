@@ -33,10 +33,10 @@ test("jaccard: 完全相同 = 1;无交集 = 0", () => {
   assert.equal(jaccard("abc", "xyz"), 0);
   assert.ok(jaccard("飞轮效应在 SaaS", "飞轮效应在电商") > 0.5);
 });
-test("dedupe: 标题相似 >0.8 合并(保留更全 summary + 合并 related/tags)", () => {
+test("dedupe: 标题相似 >0.8 合并(保留更全 summary + 合并 related/tags,related 按 title 去重)", () => {
   const points: BatchPoint[] = [
-    { title: "飞轮效应", summary: "短", source_page: 1, tags: ["增长"], related: ["网络效应"] },
-    { title: "飞轮效应", summary: "更完整的飞轮说明", source_page: 5, tags: ["飞轮"], related: ["好战略"] },
+    { title: "飞轮效应", summary: "短", source_page: 1, tags: ["增长"], related: [{ title: "网络效应", reason: "都讲平台价值" }] },
+    { title: "飞轮效应", summary: "更完整的飞轮说明", source_page: 5, tags: ["飞轮"], related: [{ title: "好战略", reason: "都讲取舍" }, { title: "网络效应", reason: "重复关联应去重" }] },
     { title: "网络效应", summary: "x", source_page: 10, tags: ["平台"], related: [] },
   ];
   const out = dedupe(points, 0.8);
@@ -44,7 +44,10 @@ test("dedupe: 标题相似 >0.8 合并(保留更全 summary + 合并 related/tag
   const feilun = out.find(p => p.title.includes("飞轮"))!;
   assert.equal(feilun.summary, "更完整的飞轮说明");
   assert.ok(feilun.tags.includes("增长") && feilun.tags.includes("飞轮"));
-  assert.ok(feilun.related.includes("网络效应") && feilun.related.includes("好战略"));
+  const titles = feilun.related.map(r => r.title);
+  assert.ok(titles.includes("网络效应") && titles.includes("好战略"));
+  assert.equal(titles.length, 2, "同 title 关联应去重");
+  assert.equal(feilun.related.find(r => r.title === "网络效应")!.reason, "都讲平台价值", "先出现的理由优先保留");
 });
 test("dedupe: 标题不同都保留", () => {
   const out = dedupe([{ title: "A", summary: "s", source_page: 1, tags: [], related: [] }, { title: "B", summary: "s", source_page: 2, tags: [], related: [] }], 0.8);
@@ -57,7 +60,7 @@ import type { LLMProvider, ChatMsg } from "../llm/llm-service.ts";
 test("extractChunk: 调 LLM + 解析 JSON 数组 + 注入前文知识点", async () => {
   let captured = "";
   const llm: LLMProvider = {
-    async chat(msgs: ChatMsg[]) { captured = msgs[0].content ?? msgs[msgs.length-1].content; return JSON.stringify([{ title: "飞轮效应", summary: "正向循环", source_page: 3, tags: ["增长"], related: ["网络效应"] }]); },
+    async chat(msgs: ChatMsg[]) { captured = msgs[0].content ?? msgs[msgs.length-1].content; return JSON.stringify([{ title: "飞轮效应", summary: "正向循环", source_page: 3, tags: ["增长"], related: [{ title: "网络效应", reason: "都讲平台价值" }] }]); },
     async *stream() { throw new Error("no"); }, abort() {},
   };
   const be = new BatchExtractor({} as any, llm, {} as any, { notesPath: "x", model: "m" } as any, { inputPer1M: 1, outputPer1M: 2 });
@@ -65,9 +68,21 @@ test("extractChunk: 调 LLM + 解析 JSON 数组 + 注入前文知识点", async
   const pts = await be.extractChunk("书.pdf", { text: "飞轮效应是指…", pages: [3, 4] }, prior);
   assert.equal(pts.length, 1);
   assert.equal(pts[0].title, "飞轮效应");
+  assert.deepEqual(pts[0].related, [{ title: "网络效应", reason: "都讲平台价值" }]);
   assert.ok(captured.includes("网络效应"), "前文知识点应注入 prompt");
   assert.ok(captured.includes("飞轮效应是指"), "块文本应注入 prompt");
   assert.ok(captured.includes("书.pdf"));
+  assert.ok(captured.includes('"related":[{"title","reason"}]'), "prompt 应要求 related 带 reason");
+});
+test("extractChunk: LLM 仍返纯标题字符串 related → 退化为 {title, reason:''}(兼容)", async () => {
+  const llm: LLMProvider = {
+    async chat() { return JSON.stringify([{ title: "飞轮效应", summary: "s", source_page: 3, tags: [], related: ["网络效应", "好战略"] }]); },
+    async *stream() { throw 0; }, abort() {},
+  };
+  const be = new BatchExtractor({} as any, llm, {} as any, { notesPath: "x", model: "m" } as any, { inputPer1M: 1, outputPer1M: 2 });
+  const pts = await be.extractChunk("b.pdf", { text: "t", pages: [1] }, []);
+  assert.equal(pts.length, 1);
+  assert.deepEqual(pts[0].related, [{ title: "网络效应", reason: "" }, { title: "好战略", reason: "" }]);
 });
 test("extractChunk: LLM 返回非 JSON → 返回空数组(不抛)", async () => {
   const llm: LLMProvider = { async chat() { return "这不是 JSON"; }, async *stream() { throw 0; }, abort() {} };
