@@ -270,3 +270,112 @@ test("synthesize: 非 abort 错 → 抛出(交 controller 友好提示)", async 
     ],
   }), /网络错误/);
 });
+
+// ── Synthesizer.synthesizeStream: 流式 ────────────────────────────────────
+
+/** 造一个流式 mock:逐段 yield deltas;可捕获 prompt / opts。 */
+function mockStream(deltas: string[]): { llm: LLMProvider; captured: () => string; opts: () => any } {
+  let captured = ""; let opts: any;
+  const llm: LLMProvider = {
+    async chat() { throw new Error("no"); },
+    async *stream(msgs: ChatMsg[], o?: any) { opts = o; captured = msgs[0].content; for (const d of deltas) yield d; },
+    abort() {},
+  };
+  return { llm, captured: () => captured, opts: () => opts };
+}
+
+const TWO = [
+  { title: "网络效应", summary: "s1", source_pdf: "a.pdf", source_page: 3, source_text: "t1", reason: "r1" },
+  { title: "好战略", summary: "s2", source_pdf: "b.pdf", source_page: 12, source_text: "t2", reason: "r2" },
+] as const;
+
+test("synthesizeStream: sparse(0 关联)→ 一帧完整单篇聚合,sparse:true,不调 stream", async () => {
+  let calls = 0;
+  const llm: LLMProvider = {
+    async chat() { return ""; },
+    async *stream() { calls++; throw 0; },
+    abort() {},
+  };
+  const synth = new Synthesizer(llm);
+  const out: any[] = [];
+  for await (const c of synth.synthesizeStream({ current: note({ title: "飞轮", summary: "正向循环" }), associated: [] })) out.push(c);
+  assert.equal(calls, 0, "不调 stream");
+  assert.equal(out.length, 1, "一帧");
+  assert.equal(out[0].sparse, true);
+  assert.ok(out[0].markdown.includes("飞轮"));
+});
+
+test("synthesizeStream: 关联 >1 → 增量 yield 累积 markdown,末帧为完整拼接,sparse:false", async () => {
+  const { llm, captured } = mockStream(["飞轮", "与", "[[网络效应]](p3)。"]);
+  const synth = new Synthesizer(llm);
+  const out: any[] = [];
+  for await (const c of synth.synthesizeStream({ current: note({ title: "飞轮" }), associated: [...TWO] })) out.push(c);
+  assert.ok(out.length >= 3, "至少 3 帧(逐 delta)");
+  assert.equal(out.at(-1)!.markdown, "飞轮与[[网络效应]](p3)。", "末帧为完整拼接");
+  assert.equal(out.at(-1)!.sparse, false);
+  assert.ok(out[1].markdown.startsWith("飞轮与"), "中间帧为累积");
+  assert.ok(captured().includes("飞轮"), "prompt 含当前知识点");
+});
+
+test("synthesizeStream: signal 透传 llm.stream opts", async () => {
+  let capturedOpts: any;
+  const llm: LLMProvider = {
+    async chat() { throw 0; },
+    async *stream(_m, o) { capturedOpts = o; yield "x"; },
+    abort() {},
+  };
+  const synth = new Synthesizer(llm);
+  const ctrl = new AbortController();
+  for await (const _ of synth.synthesizeStream({ current: note({ title: "飞轮" }), associated: [...TWO] }, ctrl.signal)) { /* drain */ }
+  assert.equal(capturedOpts.signal, ctrl.signal);
+});
+
+test("synthesizeStream: 中途 abort → 停止迭代、不抛,已 yield 部分保留", async () => {
+  const ctrl = new AbortController();
+  let i = 0;
+  const llm: LLMProvider = {
+    async chat() { throw 0; },
+    async *stream() {
+      for (const d of ["a", "b", "c", "d"]) {
+        if (i === 2) ctrl.abort();  // 第三段前取消
+        i++;
+        yield d;
+      }
+    },
+    abort() {},
+  };
+  const synth = new Synthesizer(llm);
+  const out: string[] = [];
+  for await (const c of synth.synthesizeStream({ current: note({ title: "飞轮" }), associated: [...TWO] }, ctrl.signal)) out.push(c.markdown);
+  // 取消后不再 yield 新帧;已 yield 的 "a"/"ab" 保留(不抛)
+  assert.ok(out.length <= 3, "取消后停止");
+  assert.ok(!out.some(m => m.includes("d")), "未到 d 即停");
+});
+
+test("synthesizeStream: 进入前已 abort → 不调 stream、不抛、零帧", async () => {
+  let calls = 0;
+  const llm: LLMProvider = {
+    async chat() { throw 0; },
+    async *stream() { calls++; yield "x"; },
+    abort() {},
+  };
+  const synth = new Synthesizer(llm);
+  const ctrl = new AbortController();
+  ctrl.abort();
+  const out: any[] = [];
+  for await (const c of synth.synthesizeStream({ current: note({ title: "飞轮" }), associated: [...TWO] }, ctrl.signal)) out.push(c);
+  assert.equal(calls, 0);
+  assert.equal(out.length, 0);
+});
+
+test("synthesizeStream: 非 abort 错 → 抛出", async () => {
+  const llm: LLMProvider = {
+    async chat() { throw 0; },
+    async *stream() { throw new Error("网络错误"); },
+    abort() {},
+  };
+  const synth = new Synthesizer(llm);
+  await assert.rejects(async () => {
+    for await (const _ of synth.synthesizeStream({ current: note({ title: "飞轮" }), associated: [...TWO] })) { /* drain */ }
+  }, /网络错误/);
+});

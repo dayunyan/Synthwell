@@ -165,4 +165,30 @@ export class Synthesizer {
     // 引用格式:LLM 返文本里的 [[笔记]](pN) 保留(规范化延后——page 跳转待 R2+)
     return { markdown: raw, sparse: false };
   }
+
+  /** 流式综合(供 #05 面板增量渲染):sparse(关联 ≤1)→ 一次性 yield 单篇聚合视图;
+   *  否则用 llm.stream 增量 yield 累积 markdown。取消(signal)→ 停止、不抛,已 yield 部分由调用方保留。
+   *  与 synthesize 同样的 sparse 分流与 abort 语义,但走流式让面板逐字渲染。 */
+  async *synthesizeStream(input: SynthesisInput, signal?: AbortSignal): AsyncGenerator<SynthesisChunk> {
+    if (input.associated.length <= 1) {
+      yield { markdown: buildSparseMarkdown(input), sparse: true };
+      return;
+    }
+    if (signal?.aborted) return;  // 已取消 → 不调 LLM、不抛
+    const prompt = buildSynthesisPrompt(input);
+    let acc = "";
+    try {
+      for await (const delta of this.llm.stream([{ role: "user", content: prompt }] as ChatMsg[], { temperature: 0.3, signal })) {
+        if (signal?.aborted) break;  // 中途取消 → 停止迭代
+        acc += delta;
+        yield { markdown: acc, sparse: false };
+      }
+    } catch (e) {
+      if (signal?.aborted) return;  // 取消 → 不抛,已 yield 部分保留
+      throw e;  // 其他错抛出(controller 给友好提示)
+    }
+  }
 }
+
+/** 流式综合的一帧:累积 markdown + sparse 标志(首帧 sparse=true 时即完整单篇聚合视图)。 */
+export interface SynthesisChunk { markdown: string; sparse: boolean; }

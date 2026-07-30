@@ -4,6 +4,8 @@ import { SelectionCache, type SelInfo } from "../preview/selection-cache.ts";
 import { attachSelectionCapture, type SelectionCaptureHandle } from "../preview/selection-capture.ts";
 import { PreviewTracker } from "./preview-tracker.ts";
 import { ExtractionController } from "./extraction-controller.ts";
+import { SynthesisController } from "./synthesis-controller.ts";
+import { PanelContextTracker, classifyContext, type PanelContext } from "./panel-context.ts";
 import type { ShiyueSettings } from "../settings.ts";
 
 /** AI 面板调工作区的动作接口(type-only,AiPanelView 引此避免运行时循环)。
@@ -12,8 +14,11 @@ export interface PanelActions {
   getCurrentFile(): TFile | null;
   getCurrentSelection(): SelInfo | null;
   onFileChange(fn: (f: TFile | null) => void): () => void;
+  onContextChange(fn: (c: PanelContext) => void): () => void;
   extractBatch(): Promise<void>;
   extractSelection(): Promise<void>;
+  /** 流式汇总:逐帧 onChunk(markdown, sparse);signal 取消静默结束;非 abort 错抛出。 */
+  synthesize(file: TFile, onChunk: (markdown: string, sparse: boolean) => void, signal: AbortSignal): Promise<void>;
 }
 
 export const SHIYUE_LOGO_ATTR = "data-shiyue-logo";
@@ -33,6 +38,9 @@ export class ShiyueWorkspace implements PanelActions {
   private tracker = new PreviewTracker();
   private cache = new SelectionCache();
   private controller: ExtractionController;
+  private synthesisController: SynthesisController;
+  private panelCtx = new PanelContextTracker();
+  private activeFile: TFile | null = null;  // 最近一个非 AI 面板 leaf 的文件(驱动上下文切换)
   private previewLeaf: WorkspaceLeaf | null = null;
   private aiLeaf: WorkspaceLeaf | null = null;
   private captureHandle: SelectionCaptureHandle | null = null;
@@ -40,12 +48,19 @@ export class ShiyueWorkspace implements PanelActions {
   constructor(app: App, plugin: Plugin, settings: () => ShiyueSettings, aiViewType: string) {
     this.app = app; this.plugin = plugin; this.settings = settings; this.aiViewType = aiViewType;
     this.controller = new ExtractionController(app, plugin, settings);
+    this.synthesisController = new SynthesisController(app, settings);
+    // preview 文件变化(打开 PDF)也驱动上下文重算(回退到 PDF 抽取态)
+    this.tracker.onChange(() => this.recomputeContext());
   }
 
   // ---- PanelActions ----
   getCurrentFile(): TFile | null { return this.tracker.get(); }
   getCurrentSelection(): SelInfo | null { return this.cache.get(); }
   onFileChange(fn: (f: TFile | null) => void): () => void { return this.tracker.onChange(fn); }
+  onContextChange(fn: (c: PanelContext) => void): () => void { return this.panelCtx.onChange(fn); }
+  synthesize(file: TFile, onChunk: (markdown: string, sparse: boolean) => void, signal: AbortSignal): Promise<void> {
+    return this.synthesisController.synthesize(file, onChunk, signal);
+  }
 
   async extractBatch(): Promise<void> {
     const file = this.tracker.get();
@@ -160,6 +175,46 @@ export class ShiyueWorkspace implements PanelActions {
     this.plugin.registerEvent(this.app.workspace.on("layout-change", () => { this.injectLogos(); this.syncPreviewValidity(); }));
     this.injectLogos();
     this.syncPreviewValidity();
+    this.registerPanelContextTracking();
+  }
+
+  /** R1 被动观察 active-leaf-change / file-open → 重算面板上下文(知识点笔记→汇总;PDF→抽取;否则禁用)。
+   *  零 monkey-patch。frontmatter 取 metadataCache 缓存(同步)。 */
+  private registerPanelContextTracking(): void {
+    this.plugin.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
+      const f = leafOfFile(leaf);
+      // AI 面板 leaf 自身激活(点按钮)→ 不改 activeFile,保留原上下文,避免按钮被禁用
+      if (leaf && leaf.view?.getViewType?.() === this.aiViewType) return;
+      if (f !== undefined) this.activeFile = f;
+      this.recomputeContext();
+    }));
+    this.plugin.registerEvent(this.app.workspace.on("file-open", (file) => {
+      this.activeFile = file;
+      this.recomputeContext();
+    }));
+    // frontmatter 异步解析:刚打开的笔记 active-leaf-change 时 frontmatter 可能尚未缓存 →
+    // 此处在其 metadata 就绪后重算,确保知识点笔记被正确识别为 knowledge-point。
+    this.plugin.registerEvent(this.app.metadataCache.on("changed", (file) => {
+      if (file === this.activeFile) this.recomputeContext();
+    }));
+    this.recomputeContext();
+  }
+
+  /** 上下文优先级:激活 leaf 的知识点笔记 > 激活/预览 PDF > 无。
+   *  - 激活知识点笔记 → knowledge-point(面板切汇总按钮)。
+   *  - 激活 PDF / 或预览有 PDF(激活在图谱/面板等无文件处时回退)→ pdf(两抽取按钮,现状)。
+   *  - 否则 → none(禁用)。
+   *  classifyContext 已封装 kind 判定,这里只按 kind 路由(不重复分支判扩展名)。 */
+  private recomputeContext(): void {
+    const af = this.activeFile;
+    if (af) {
+      const fm = this.app.metadataCache.getFileCache(af)?.frontmatter ?? null;
+      const kind = classifyContext(af, fm);
+      if (kind !== "none") { this.panelCtx.set({ file: af, kind }); return; }
+    }
+    const preview = this.tracker.get();
+    if (preview && preview.extension === "pdf") { this.panelCtx.set({ file: preview, kind: "pdf" }); return; }
+    this.panelCtx.set({ file: null, kind: "none" });
   }
 
   /** preview 关闭/失效时清 tracker → AI 面板按钮禁用(#2 round-2)。layout-change 时复查。 */
@@ -201,4 +256,11 @@ class ShiyuePdfPickerModal extends FuzzySuggestModal<TFile> {
   getItems(): TFile[] { return this.items; }
   getItemText(item: TFile): string { return item.basename; }
   onChooseItem(item: TFile): void { this.onChoose(item); }
+}
+
+/** 取 leaf 当前打开的文件(FileView.file;PDF/Markdown view 均有)。无文件 → null;leaf 为 null → undefined(表示「不变」)。 */
+function leafOfFile(leaf: WorkspaceLeaf | null): TFile | null | undefined {
+  if (!leaf) return undefined;
+  const v = leaf.view as unknown as { file?: TFile; getViewType?: () => string };
+  return v?.file ?? null;
 }

@@ -1,16 +1,31 @@
 // src/workspace/ai-panel-view.ts
-import { ItemView, WorkspaceLeaf, TFile, Notice } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownRenderer, Component } from "obsidian";
 import type { PanelActions } from "./shiyue-workspace.ts";
+import type { PanelContext } from "./panel-context.ts";
+import { LoadingNotice } from "../ui/loading-notice.ts";
 
 export const SHIYUE_AI_PANEL_VIEW = "shiyue-ai-panel";
 
-/** 拾阅 AI 面板:两按钮(抽取整篇 / 选区知识点提取)+ 聊天留位。
- *  按钮启用/禁用跟踪预览文件(经 PanelActions.onFileChange)。 */
+/** 拾阅 AI 面板:按上下文切换两态(#05 wiring)。
+ *  - pdf → 两抽取按钮(整篇 / 选区)。
+ *  - knowledge-point → 「汇总这个知识点」按钮 + 流式渲染综合摘要([[笔记]](pN) 可点跳转,原生)。
+ *  - none → 禁用占位。
+ *  渲染用 MarkdownRenderer.render + 每帧 Component 生命周期(替换/取消 unload 旧 Component,防泄漏 spec D6)。
+ *  取消用 AbortController 贯穿(LoadingNotice 的「停止」→ abort;与抽取一致)。 */
 export class AiPanelView extends ItemView {
   private actions: PanelActions;
-  private batchBtn?: HTMLButtonElement;
-  private selBtn?: HTMLButtonElement;
-  private detachFile: (() => void) | null = null;
+  private actionsEl!: HTMLElement;
+  private synthesisEl!: HTMLElement;
+  private detachContext: (() => void) | null = null;
+
+  // 合成渲染状态
+  private synthAbort: AbortController | null = null;
+  private synthComp: Component | null = null;
+  private renderChain: Promise<void> = Promise.resolve();
+  private renderGen = 0;          // 每次 teardown 递增;in-flight 渲染据此自废
+  private synthActive = false;    // 是否有渲染在跑(去重)
+  private latestMd = "";
+  private latestPath = "";
 
   constructor(leaf: WorkspaceLeaf, actions: PanelActions) {
     super(leaf);
@@ -26,25 +41,125 @@ export class AiPanelView extends ItemView {
     c.empty();
     c.addClass("shiyue-ai-panel");
 
-    const btns = c.createDiv({ cls: "shiyue-ai-actions" });
-    this.batchBtn = btns.createEl("button", { text: "抽取整篇知识点" });
-    this.selBtn = btns.createEl("button", { text: "选区知识点提取" });
-
-    const onErr = (label: string) => (e: unknown) =>
-      new Notice(`${label}:${e instanceof Error ? e.message : String(e)}`, 8000);
-    this.batchBtn.onclick = () => { void this.actions.extractBatch().catch(onErr("抽取失败")); };
-    this.selBtn.onclick = () => { void this.actions.extractSelection().catch(onErr("深抽失败")); };
-
+    this.actionsEl = c.createDiv({ cls: "shiyue-ai-actions" });
+    this.synthesisEl = c.createDiv({ cls: "shiyue-ai-synthesis" });
     c.createDiv({ cls: "shiyue-ai-chat-placeholder" })
       .createEl("p", { text: "聊天 Agent(待实现)" });
 
-    const sync = (f: TFile | null) => {
-      const has = !!f;
-      if (this.batchBtn) this.batchBtn.disabled = !has;
-      if (this.selBtn) this.selBtn.disabled = !has;  // 有文件即启用;无选区时点击给 Notice
-    };
-    this.detachFile = this.actions.onFileChange(sync);
+    // 视图关闭时 unload 当前渲染 Component(防泄漏,spec D6)。
+    // 不把每帧 Component addChild 到视图(会累积死 child);改为手动 unload + 这里注册一次兜底。
+    this.register(() => this.unloadSynthComp());
+    this.detachContext = this.actions.onContextChange((ctx) => this.renderContext(ctx));
   }
 
-  async onClose(): Promise<void> { this.detachFile?.(); this.detachFile = null; }
+  /** 按上下文切换按钮区;切换即取消在飞汇总 + 清空渲染(防残留 + 防泄漏)。 */
+  private renderContext(ctx: PanelContext): void {
+    this.teardownSynthesis();
+    this.actionsEl.empty();
+    this.synthesisEl.empty();
+    this.synthesisEl.toggleClass("is-active", false);
+
+    if (ctx.kind === "pdf") this.renderExtractionActions();
+    else if (ctx.kind === "knowledge-point" && ctx.file) this.renderSynthesisActions(ctx.file);
+    else this.renderDisabled();
+  }
+
+  // ---- pdf:两抽取按钮(现状)----
+  private renderExtractionActions(): void {
+    const batchBtn = this.actionsEl.createEl("button", { text: "抽取整篇知识点" });
+    const selBtn = this.actionsEl.createEl("button", { text: "选区知识点提取" });
+    const onErr = (label: string) => (e: unknown) =>
+      new Notice(`${label}:${e instanceof Error ? e.message : String(e)}`, 8000);
+    batchBtn.onclick = () => { void this.actions.extractBatch().catch(onErr("抽取失败")); };
+    selBtn.onclick = () => { void this.actions.extractSelection().catch(onErr("深抽失败")); };
+  }
+
+  // ---- knowledge-point:汇总按钮 ----
+  private renderSynthesisActions(file: TFile): void {
+    const btn = this.actionsEl.createEl("button", { text: "汇总这个知识点" });
+    btn.onclick = () => { void this.runSynthesis(file); };
+  }
+
+  private renderDisabled(): void {
+    this.actionsEl.createEl("p", { cls: "shiyue-ai-hint", text: "打开 PDF 或知识点笔记以启用" });
+  }
+
+  /** 跑汇总:AbortController 贯穿 + LoadingNotice(停止→abort,与抽取一致)+ 流式渲染到 synthesisEl。
+   *  取消 → synthesizeStream 静默结束,已渲染部分保留;非 abort 错 → Notice。 */
+  private async runSynthesis(file: TFile): Promise<void> {
+    this.teardownSynthesis();
+    const abort = new AbortController();
+    this.synthAbort = abort;
+    const loading = new LoadingNotice(this.app, "汇总中", () => abort.abort());
+    loading.show();
+    this.synthesisEl.empty();
+    this.synthesisEl.toggleClass("is-active", true);
+    this.synthesisEl.createDiv({ cls: "shiyue-ai-synthesizing", text: "综合关联笔记中…" });
+    try {
+      await this.actions.synthesize(
+        file,
+        (md, sparse) => this.scheduleRender(md, sparse, file.path),
+        abort.signal,
+      );
+    } catch (e) {
+      if (!abort.signal.aborted) {
+        new Notice(`汇总失败:${e instanceof Error ? e.message : String(e)}`, 8000);
+      }
+    } finally {
+      loading.hide();
+      this.synthAbort = null;
+    }
+  }
+
+  /** 流式渲染调度:去重 + 串行化。rapid 帧合并——只渲最新 markdown,旧 Component unload 防泄漏。
+   *  renderGen 让 teardown 后的 in-flight 渲染自废(不再 empty/append)。
+   *  每帧 Component 手动 load/unload(不 addChild 到视图,避免累积死 child);视图关闭由 onOpen 注册的兜底 unload)。 */
+  private scheduleRender(md: string, sparse: boolean, path: string): void {
+    void sparse;  // sparse 仅首帧有意义(controller 据此决定;面板统一渲染,不区分)
+    this.latestMd = md; this.latestPath = path;
+    if (this.synthActive) return;  // 已有渲染在跑,链尾会取最新值
+    this.synthActive = true;
+    const gen = this.renderGen;
+    this.renderChain = this.renderChain.then(async () => {
+      try {
+        while (gen === this.renderGen) {
+          const m = this.latestMd, p = this.latestPath;
+          this.unloadSynthComp();
+          const comp = new Component();
+          this.synthComp = comp;
+          this.synthesisEl.empty();
+          await MarkdownRenderer.render(this.app, m, this.synthesisEl, p, comp);
+          comp.load();  // 激活 Component(注册的 DOM/event 回调在此挂载)
+          if (gen !== this.renderGen) break;     // 已被 teardown
+          if (this.latestMd === m) break;         // 无更新的帧 → 结束
+        }
+      } catch {
+        // MarkdownRenderer.render 不应抛;吞掉保活 renderChain
+      } finally {
+        if (gen === this.renderGen) this.synthActive = false;
+      }
+    });
+  }
+
+  /** unload 当前渲染 Component(防泄漏)。 */
+  private unloadSynthComp(): void {
+    this.synthComp?.unload();
+    this.synthComp = null;
+  }
+
+  /** 取消在飞汇总 + unload 当前渲染 Component + 让 in-flight 渲染自废。 */
+  private teardownSynthesis(): void {
+    this.renderGen++;
+    this.synthAbort?.abort();
+    this.synthAbort = null;
+    this.unloadSynthComp();
+    this.synthActive = false;
+    this.latestMd = "";
+  }
+
+  async onClose(): Promise<void> {
+    this.teardownSynthesis();
+    this.detachContext?.();
+    this.detachContext = null;
+  }
 }

@@ -11,6 +11,16 @@
 .shiyue-ai-actions { display: flex; flex-direction: column; gap: 0.4rem; }
 .shiyue-ai-actions button { padding: 0.5rem; }
 .shiyue-ai-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.shiyue-ai-hint { color: var(--text-muted); font-style: italic; margin: 0; padding: 0.4rem 0; }
+
+/* 汇总结果区(workspace/ai-panel-view.ts,#05):MarkdownRenderer 渲染的综合摘要。
+ * 默认空占位;汇总时 is-active 展开滚动。[[笔记]] 链接原生可点(openLinkText)。 */
+.shiyue-ai-synthesis { display: none; overflow: auto; }
+.shiyue-ai-synthesis.is-active {
+  display: block; flex: 1; min-height: 6rem;
+  padding: 0.5rem; border-top: 1px solid var(--background-modifier-border);
+}
+.shiyue-ai-synthesizing { color: var(--text-muted); font-style: italic; padding: 0.5rem 0; }
 .shiyue-ai-chat-placeholder {
   flex: 1; display: flex; align-items: center; justify-content: center;
   color: var(--text-muted); font-style: italic;
