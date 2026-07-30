@@ -1,5 +1,6 @@
 import type { LLMProvider, ChatMsg } from "../llm/llm-service.ts";
 import type { RelatedRef } from "./normalize.ts";
+import { t } from "../../i18n/index.ts";
 
 /** 一条知识点笔记的完整形状(关联筛选与综合共用)。
  *  current 与候选笔记同形:都带 tags / related(backlink)/ source_text,筛选与单篇聚合视图都用得到。 */
@@ -113,25 +114,26 @@ export function buildSynthesisPrompt(input: SynthesisInput): string {
 }
 
 /** honest-sparse 单篇聚合视图(关联 ≤1 时不调 LLM):当前知识点 + 各关联点 summary + 原文片段 + 诚实标注。
- *  不编造、不假承诺:如实标注关联少,随抽取更多文档汇总将跨文档综合(CONTEXT「honest sparse」)。 */
+ *  不编造、不假承诺:如实标注关联少,随抽取更多文档汇总将跨文档综合(CONTEXT「honest sparse」)。
+ *  渲染给用户的 markdown(user-facing)走 i18n;LLM prompt(buildSynthesisPrompt)不走(issue #06)。 */
 export function buildSparseMarkdown(input: SynthesisInput): string {
   const c = input.current;
   const lines: string[] = [];
-  lines.push(`# 汇总:${c.title}`);
+  lines.push(t("synth.sparse.heading", { title: c.title }));
   lines.push("");
-  lines.push("> ⚠️ 关联较少。目前这个知识点的关联笔记不足,无法跨文档综合。随着你抽取更多文档,汇总将跨文档综合关联知识点。");
+  lines.push(t("synth.sparse.warning"));
   lines.push("");
-  lines.push("## 当前知识点");
-  lines.push(`**${c.title}**(《${c.source_pdf}》p${c.source_page})`);
+  lines.push(t("synth.sparse.currentHeading"));
+  lines.push(t("synth.sparse.currentLine", { title: c.title, pdf: c.source_pdf, page: c.source_page }));
   lines.push(c.summary);
-  if (c.source_text) lines.push(`> 原文片段:${c.source_text}`);
+  if (c.source_text) lines.push(t("synth.sparse.excerpt", { text: c.source_text }));
   if (input.associated.length) {
-    lines.push("", "## 关联笔记");
+    lines.push("", t("synth.sparse.relatedHeading"));
     for (const a of input.associated) {
       lines.push(`### [[${a.title}]](p${a.source_page})`);
-      lines.push(`(《${a.source_pdf}》)`);
+      lines.push(`(《${a.source_pdf}》)`);  // 引用标记(书名号),两语言同形
       lines.push(a.summary);
-      lines.push(`> 原文片段:${a.source_text}`);
+      lines.push(t("synth.sparse.excerpt", { text: a.source_text }));
     }
   }
   lines.push("");

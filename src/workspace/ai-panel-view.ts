@@ -3,6 +3,7 @@ import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownRenderer, Component } f
 import type { PanelActions } from "./shiyue-workspace.ts";
 import type { PanelContext } from "./panel-context.ts";
 import { LoadingNotice } from "../ui/loading-notice.ts";
+import { t } from "../i18n/index.ts";
 
 export const SHIYUE_AI_PANEL_VIEW = "shiyue-ai-panel";
 
@@ -33,7 +34,7 @@ export class AiPanelView extends ItemView {
   }
 
   getViewType(): string { return SHIYUE_AI_PANEL_VIEW; }
-  getDisplayText(): string { return "拾阅 AI 面板"; }
+  getDisplayText(): string { return t("panel.displayText"); }
   getIcon(): string { return "book-open"; }
 
   async onOpen(): Promise<void> {
@@ -44,7 +45,7 @@ export class AiPanelView extends ItemView {
     this.actionsEl = c.createDiv({ cls: "shiyue-ai-actions" });
     this.synthesisEl = c.createDiv({ cls: "shiyue-ai-synthesis" });
     c.createDiv({ cls: "shiyue-ai-chat-placeholder" })
-      .createEl("p", { text: "聊天 Agent(待实现)" });
+      .createEl("p", { text: t("panel.chatPlaceholder") });
 
     // 视图关闭时 unload 当前渲染 Component(防泄漏,spec D6)。
     // 不把每帧 Component addChild 到视图(会累积死 child);改为手动 unload + 这里注册一次兜底。
@@ -66,22 +67,22 @@ export class AiPanelView extends ItemView {
 
   // ---- pdf:两抽取按钮(现状)----
   private renderExtractionActions(): void {
-    const batchBtn = this.actionsEl.createEl("button", { text: "抽取整篇知识点" });
-    const selBtn = this.actionsEl.createEl("button", { text: "选区知识点提取" });
-    const onErr = (label: string) => (e: unknown) =>
-      new Notice(`${label}:${e instanceof Error ? e.message : String(e)}`, 8000);
-    batchBtn.onclick = () => { void this.actions.extractBatch().catch(onErr("抽取失败")); };
-    selBtn.onclick = () => { void this.actions.extractSelection().catch(onErr("深抽失败")); };
+    const batchBtn = this.actionsEl.createEl("button", { text: t("panel.btn.batch") });
+    const selBtn = this.actionsEl.createEl("button", { text: t("panel.btn.selection") });
+    const onErr = (key: "panel.err.batch" | "panel.err.selection") => (e: unknown) =>
+      new Notice(t(key, { msg: e instanceof Error ? e.message : String(e) }), 8000);
+    batchBtn.onclick = () => { void this.actions.extractBatch().catch(onErr("panel.err.batch")); };
+    selBtn.onclick = () => { void this.actions.extractSelection().catch(onErr("panel.err.selection")); };
   }
 
   // ---- knowledge-point:汇总按钮 ----
   private renderSynthesisActions(file: TFile): void {
-    const btn = this.actionsEl.createEl("button", { text: "汇总这个知识点" });
+    const btn = this.actionsEl.createEl("button", { text: t("panel.btn.synthesis") });
     btn.onclick = () => { void this.runSynthesis(file); };
   }
 
   private renderDisabled(): void {
-    this.actionsEl.createEl("p", { cls: "shiyue-ai-hint", text: "打开 PDF 或知识点笔记以启用" });
+    this.actionsEl.createEl("p", { cls: "shiyue-ai-hint", text: t("panel.hint.disabled") });
   }
 
   /** 跑汇总:AbortController 贯穿 + LoadingNotice(停止→abort,与抽取一致)+ 流式渲染到 synthesisEl。
@@ -90,11 +91,11 @@ export class AiPanelView extends ItemView {
     this.teardownSynthesis();
     const abort = new AbortController();
     this.synthAbort = abort;
-    const loading = new LoadingNotice(this.app, "汇总中", () => abort.abort());
+    const loading = new LoadingNotice(this.app, t("panel.synth.loading"), () => abort.abort());
     loading.show();
     this.synthesisEl.empty();
     this.synthesisEl.toggleClass("is-active", true);
-    this.synthesisEl.createDiv({ cls: "shiyue-ai-synthesizing", text: "综合关联笔记中…" });
+    this.synthesisEl.createDiv({ cls: "shiyue-ai-synthesizing", text: t("panel.synth.working") });
     try {
       await this.actions.synthesize(
         file,
@@ -103,7 +104,7 @@ export class AiPanelView extends ItemView {
       );
     } catch (e) {
       if (!abort.signal.aborted) {
-        new Notice(`汇总失败:${e instanceof Error ? e.message : String(e)}`, 8000);
+        new Notice(t("panel.err.synthesis", { msg: e instanceof Error ? e.message : String(e) }), 8000);
       }
     } finally {
       loading.hide();

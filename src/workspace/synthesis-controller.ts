@@ -3,6 +3,7 @@ import { App, TFile } from "obsidian";
 import { OpenAICompatibleProvider } from "../core/llm/llm-service.ts";
 import { Synthesizer, filterAssociated } from "../core/extraction/synthesizer.ts";
 import { parseKnowledgeNote } from "../core/extraction/note-parser.ts";
+import { t } from "../i18n/index.ts";
 import type { KnowledgeNote } from "../core/extraction/synthesizer.ts";
 import type { ShiyueSettings } from "../settings.ts";
 
@@ -23,7 +24,7 @@ export class SynthesisController {
   ): Promise<void> {
     const s = this.settings();
     const apiKey = (this.app.secretStorage.getSecret("shiyue-api-key") ?? "") as string;
-    if (!apiKey) { throw new Error("未配置 API Key,请在设置中添加"); }
+    if (!apiKey) { throw new Error(t("notice.noApiKey")); }
     const provider = new OpenAICompatibleProvider({ baseURL: s.baseURL, apiKey, model: s.model });
     const synth = new Synthesizer(provider);
 

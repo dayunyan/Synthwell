@@ -1,5 +1,6 @@
 // src/ui/loading-notice.ts
 import { App, Notice } from "obsidian";
+import { t } from "../i18n/index.ts";
 
 /** 持续 Notice:spinner + 文本 + Stop 按钮。Stop → onCancel(controller.abort)。
  *  new Notice(el, 0) 持续不自动隐;update 改文本。batch 经 onConfirmed 显;selection 直接显。
@@ -16,7 +17,7 @@ export class LoadingNotice {
     root.className = "shiyue-loading-notice";
     root.createEl("span", { cls: "shiyue-spinner" });
     this.textEl = root.createEl("span", { cls: "shiyue-loading-text", text: `${this.label}${text ? " " + text : ""}` });
-    const stop = root.createEl("button", { cls: "shiyue-loading-stop", text: "停止" });
+    const stop = root.createEl("button", { cls: "shiyue-loading-stop", text: t("loading.stop") });
     stop.onclick = () => this.onCancel();
     // Notice 类型只收 string | DocumentFragment(runtime 也收 HTMLElement,但类型不收)→ 包一层 fragment。
     const frag = document.createDocumentFragment();

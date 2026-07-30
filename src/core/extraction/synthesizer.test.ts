@@ -10,6 +10,7 @@ import {
   type SynthesisInput,
 } from "./synthesizer.ts";
 import type { LLMProvider, ChatMsg } from "../llm/llm-service.ts";
+import { setLocale, getLocale } from "../../i18n/index.ts";
 
 /** 造一个 mock LLMProvider:chat 返回 canned 文本,并可捕获 prompt / opts。 */
 function mockLLM(reply: string): { llm: LLMProvider; captured: () => string; opts: () => any; calls: () => number } {
@@ -378,4 +379,40 @@ test("synthesizeStream: 非 abort 错 → 抛出", async () => {
   await assert.rejects(async () => {
     for await (const _ of synth.synthesizeStream({ current: note({ title: "飞轮" }), associated: [...TWO] })) { /* drain */ }
   }, /网络错误/);
+});
+
+// ── buildSparseMarkdown: i18n (en locale) ──────────────────────────────────
+
+test("buildSparseMarkdown: en locale → 英文标题/标注/小节名", () => {
+  const saved = getLocale();
+  setLocale("en");
+  try {
+    const md = buildSparseMarkdown({
+      current: note({ title: "Flywheel", summary: "positive loop", source_text: "excerpt" }),
+      associated: [{ title: "Network effects", summary: "platform value", source_pdf: "Book.pdf", source_page: 3, source_text: "nf excerpt", reason: "" }],
+    });
+    assert.ok(md.includes("# Synthesis: Flywheel"), "英文标题");
+    assert.ok(md.includes("Few related notes"), "英文诚实标注");
+    assert.ok(md.includes("## Current knowledge point"), "英文「当前知识点」");
+    assert.ok(md.includes("## Related notes"), "英文「关联笔记」");
+    assert.ok(md.includes("Source excerpt: excerpt"), "英文原文片段标签");
+    assert.ok(md.includes("[[Network effects]](p3)"), "引用结构不变");
+    // 确认无中文残留(en 下不应混入中文小节名)
+    assert.ok(!md.includes("## 当前知识点"), "不应有中文小节名");
+  } finally {
+    setLocale(saved);
+  }
+});
+
+test("buildSparseMarkdown: zh-CN(default) → 中文标题/标注(不回归)", () => {
+  const saved = getLocale();
+  setLocale("zh-CN");
+  try {
+    const md = buildSparseMarkdown({ current: note({ title: "飞轮" }), associated: [] });
+    assert.ok(md.includes("# 汇总:飞轮"), "中文标题");
+    assert.ok(md.includes("关联较少"), "中文诚实标注");
+    assert.ok(md.includes("## 当前知识点"), "中文小节名");
+  } finally {
+    setLocale(saved);
+  }
 });

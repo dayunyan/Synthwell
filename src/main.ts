@@ -6,6 +6,7 @@ import { UsageTracker } from "./core/llm/usage";
 import { ShiyueWorkspace } from "./workspace/shiyue-workspace";
 import { AiPanelView, SHIYUE_AI_PANEL_VIEW } from "./workspace/ai-panel-view";
 import { registerFileMenu } from "./workspace/file-menu";
+import { detectLocale, setLocale, t } from "./i18n";
 
 export default class ShiyuePlugin extends Plugin {
   settings: ShiyueSettings = DEFAULT_SETTINGS;
@@ -13,6 +14,8 @@ export default class ShiyuePlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
+    // #06:检测系统语言(window.moment?.locale() / navigator.language)→ 设 i18n locale。
+    setLocale(detectLocale());
 
     // 先建 workspace:registerView 的 factory 闭包要拿到 this.workspace
     this.workspace = new ShiyueWorkspace(this.app, this, () => this.settings, SHIYUE_AI_PANEL_VIEW);
@@ -23,17 +26,17 @@ export default class ShiyuePlugin extends Plugin {
 
     this.addCommand({
       id: "open-in-shiyue",
-      name: "拾阅: 在拾阅中打开 PDF",
+      name: t("cmd.openInShiyue"),
       callback: () => { void this.workspace.openInShiyuePicker(); },
     });
     this.addCommand({
       id: "extract-batch",
-      name: "拾阅: 抽取整篇知识点(当前预览)",
+      name: t("cmd.extractBatch"),
       checkCallback: (checking) => this.batchCommand(checking),
     });
     this.addCommand({
       id: "extract-selection",
-      name: "拾阅: 选区知识点提取(当前预览)",
+      name: t("cmd.extractSelection"),
       checkCallback: (checking) => this.selectionCommand(checking),
     });
 

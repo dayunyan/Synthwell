@@ -6,6 +6,7 @@ import { PreviewTracker } from "./preview-tracker.ts";
 import { ExtractionController } from "./extraction-controller.ts";
 import { SynthesisController } from "./synthesis-controller.ts";
 import { PanelContextTracker, classifyContext, type PanelContext } from "./panel-context.ts";
+import { t } from "../i18n/index.ts";
 import type { ShiyueSettings } from "../settings.ts";
 
 /** AI 面板调工作区的动作接口(type-only,AiPanelView 引此避免运行时循环)。
@@ -64,15 +65,15 @@ export class ShiyueWorkspace implements PanelActions {
 
   async extractBatch(): Promise<void> {
     const file = this.tracker.get();
-    if (!file) { new Notice("没有打开的 PDF"); return; }
+    if (!file) { new Notice(t("notice.noPdf")); return; }
     await this.controller.extractBatch(file);
   }
 
   async extractSelection(): Promise<void> {
     const file = this.tracker.get();
-    if (!file) { new Notice("没有打开的 PDF"); return; }
+    if (!file) { new Notice(t("notice.noPdf")); return; }
     const sel = this.cache.get();
-    if (!sel) { new Notice("请先在 PDF 中选中一段文字", 4000); return; }
+    if (!sel) { new Notice(t("notice.selectText"), 4000); return; }
     this.captureHandle?.setExtracting(true);   // 深抽进行中:藏浮按钮,不重复触发
     try { await this.controller.extractSelection(file, sel); }
     finally { this.captureHandle?.setExtracting(false); }
@@ -137,7 +138,7 @@ export class ShiyueWorkspace implements PanelActions {
   async openInShiyue(file: TFile): Promise<void> {
     await this.ensureShiyueSplit();
     const preview = this.previewLeaf;
-    if (!preview) { new Notice("无法创建预览面板"); return; }
+    if (!preview) { new Notice(t("notice.cantCreatePreview")); return; }
     const hasDoc = !!this.tracker.get() && this.isPreviewLeafValid();
     let target: WorkspaceLeaf;
     if (hasDoc) {
@@ -239,7 +240,7 @@ export class ShiyueWorkspace implements PanelActions {
   // ---- picker ----
   async openInShiyuePicker(): Promise<void> {
     const pdfs = this.app.vault.getFiles().filter((f) => f.extension === "pdf");
-    if (pdfs.length === 0) { new Notice("vault 中没有 .pdf 文件"); return; }
+    if (pdfs.length === 0) { new Notice(t("notice.noPdfInVault")); return; }
     const picker = new ShiyuePdfPickerModal(this.app, pdfs, (f) => { void this.openInShiyue(f); });
     picker.open();
   }
@@ -251,7 +252,7 @@ export class ShiyueWorkspace implements PanelActions {
 class ShiyuePdfPickerModal extends FuzzySuggestModal<TFile> {
   constructor(app: App, private readonly items: TFile[], private readonly onChoose: (f: TFile) => void) {
     super(app);
-    this.setTitle("选择要在拾阅中打开的 PDF").setPlaceholder("搜索文件名…");
+    this.setTitle(t("picker.title")).setPlaceholder(t("picker.placeholder"));
   }
   getItems(): TFile[] { return this.items; }
   getItemText(item: TFile): string { return item.basename; }

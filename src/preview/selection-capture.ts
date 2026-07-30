@@ -2,6 +2,7 @@
 import type { WorkspaceLeaf } from "obsidian";
 import type { SelectionCache } from "./selection-cache.ts";
 import { computeFloatPosition, FloatVisibility } from "./selection-float.ts";
+import { t } from "../i18n/index.ts";
 
 /** 从选区锚点向上找页码:遍历祖先取 dataset.pageNumber(pdfjs `.page[data-page-number]` 有此属性)。
  *  找不到返回 null(调用方 fallback 1)。 */
@@ -43,7 +44,7 @@ export function attachSelectionCapture(leaf: WorkspaceLeaf, cache: SelectionCach
   const ensureBtn = (): HTMLButtonElement => {
     if (btn) return btn;
     const b = document.body.createEl("button", { cls: "shiyue-float-deepread" });
-    b.setText("深读");
+    b.setText(t("float.deepRead"));
     b.style.visibility = "hidden";   // 藏态仍占布局,offsetWidth 可测
     b.style.pointerEvents = "none";
     b.addEventListener("click", (ev) => {

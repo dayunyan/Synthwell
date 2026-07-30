@@ -1,5 +1,6 @@
 // src/ui/confirm-modal.ts
 import { App, Modal } from "obsidian";
+import { t } from "../i18n/index.ts";
 
 export interface CostInfo { book: string; chunks: number; tokens: number; cost: number; }
 
@@ -8,11 +9,11 @@ export interface CostInfo { book: string; chunks: number; tokens: number; cost: 
 export function confirmCost(app: App, info: CostInfo): Promise<boolean> {
   return new Promise((resolve) => {
     const m = new Modal(app);
-    m.titleEl.setText("抽取知识点 — 预估花费");
-    m.contentEl.createEl("p", { text: `《${info.book}》:约 ${info.chunks} 块 / ${info.tokens} tokens,预计 ¥${info.cost.toFixed(3)}。继续?` });
+    m.titleEl.setText(t("confirm.title"));
+    m.contentEl.createEl("p", { text: t("confirm.body", { book: info.book, chunks: info.chunks, tokens: info.tokens, cost: info.cost.toFixed(3) }) });
     const btns = m.contentEl.createDiv({ cls: "shiyue-confirm-btns" });
-    const yes = btns.createEl("button", { text: "继续" });
-    const no = btns.createEl("button", { text: "取消" });
+    const yes = btns.createEl("button", { text: t("confirm.yes") });
+    const no = btns.createEl("button", { text: t("confirm.no") });
     let settled = false;
     const done = (v: boolean) => { if (settled) return; settled = true; m.close(); resolve(v); };
     yes.onclick = () => done(true);
