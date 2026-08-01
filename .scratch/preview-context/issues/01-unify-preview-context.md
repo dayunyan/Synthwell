@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 ## 设计决策(grill-with-docs 已定)
 
@@ -43,3 +43,4 @@
 
 ## Comments
 - 2026-08-02 — grill-with-docs 定 design(5 决策)。源:三轮 bug post-mortem(improve-codebase-architecture 候选 #1,Strong)。三轮各追到四源之一变陈旧/隐式顺序耦合;纯派生 Model B 直接消同源。`derivePreviewContext` 纯 seam 首次让「结构→上下文」映射可单测(此前全 HITL)。
+- 2026-08-02 — 实现完成(/implement + /code-review)。新增 `src/workspace/preview-context.ts`(`derivePreviewContext` 纯函数 + `PreviewContext` 接线壳)+ `.test.ts`(16 用例覆盖 (a)-(e) + currentTab 边界);`ShiyueWorkspace` 删 4 字段(tracker/activeFile/panelCtx/previewLeaf)+ 僵尸 `aiLeaf` 字段,所有读委托 `previewCtx`,写操作逻辑留只换 leaf 来源;删 `preview-tracker.ts`(+test)、`PanelContextTracker` 类,留 `classifyContext`/`PanelContext` 类型。`npm run build` clean;`node --test` 161/161 绿(150 − 5 PreviewTracker + 16 derivePreviewContext)。code-review Spec 发现 `metadataCache.changed` 守卫用 `last?.file`(缓存)有顺序耦合风险 → 改无条件 recompute(靠 diff 去噪)。写侧 Obsidian 耦合(5 项回归)待人工验 → status ready-for-human。

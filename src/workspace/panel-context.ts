@@ -24,24 +24,6 @@ export function classifyContext(file: ContextFile | null, fm: ContextFrontmatter
   return "none";
 }
 
-/** AI 面板上下文(跟踪当前激活 leaf)。纯值持有 + 观察者,与 PreviewTracker 同模式,可单测。 */
+/** AI 面板上下文:{file, kind}。跟踪者已并入 PreviewContext(纯派生 + diff + onChange);
+ *  本类型保留供 AiPanelView/onContextChange 复用(PreviewCtx extends PanelContext)。 */
 export interface PanelContext { file: TFile | null; kind: PanelContextKind; }
-
-export class PanelContextTracker {
-  private ctx: PanelContext = { file: null, kind: "none" };
-  private listeners = new Set<(c: PanelContext) => void>();
-
-  get(): PanelContext { return this.ctx; }
-
-  set(ctx: PanelContext): void {
-    this.ctx = ctx;
-    for (const fn of this.listeners) fn(ctx);
-  }
-
-  /** 注册监听;立即回调当前值。返回取消订阅。 */
-  onChange(fn: (c: PanelContext) => void): () => void {
-    this.listeners.add(fn);
-    fn(this.ctx);
-    return () => { this.listeners.delete(fn); };
-  }
-}
