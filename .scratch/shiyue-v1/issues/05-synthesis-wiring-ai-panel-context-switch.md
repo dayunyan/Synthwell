@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 — Synthesizer 纯逻辑核心(本 ticket 调它)。
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 - [ ] PanelTracker 扩展:跟踪当前激活 leaf 的文件,暴露 `{file, isKnowledgePoint}`(读 `shiyue_type`);`active-leaf-change` 驱动切换。
 - [ ] AI 面板上下文切换:当前是知识点笔记 → 显「汇总这个知识点」按钮;PDF 预览 → 显两抽取按钮(现状);普通 md/无文件 → 禁用。
