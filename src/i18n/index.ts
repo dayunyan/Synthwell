@@ -45,6 +45,8 @@ export const MESSAGES = {
   "panel.err.batch": { "zh-CN": "提炼失败:{msg}", en: "Refine failed: {msg}" },
   "panel.err.selection": { "zh-CN": "精读失败:{msg}", en: "Close-read failed: {msg}" },
   "panel.err.synthesis": { "zh-CN": "汇总失败:{msg}", en: "Synthesis failed: {msg}" },
+  "panel.err.openLink": { "zh-CN": "打开失败:{msg}", en: "Open failed: {msg}" },
+  "panel.err.linkNotFound": { "zh-CN": "找不到笔记:{link}", en: "Note not found: {link}" },
 
   // ---- 文件菜单(file-menu.ts)----
   "menu.openInShiyue": { "zh-CN": "在拾阅中打开", en: "Open in Shiyue" },

@@ -61,6 +61,8 @@
   white-space: nowrap;
 }
 .shiyue-float-deepread:hover {
-  background: var(--background-modifier-hover);
+  /* --background-modifier-hover 在某些主题是半透明(为列表项 hover 设计)→ 浮按钮 hover 透出 PDF(Bug 2)。
+   * 用不透明的 --background-secondary,accent 边框标 hover。 */
+  background: var(--background-secondary);
   border-color: var(--interactive-accent);
 }

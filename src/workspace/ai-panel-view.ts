@@ -27,6 +27,7 @@ export class AiPanelView extends ItemView {
   private synthActive = false;    // 是否有渲染在跑(去重)
   private latestMd = "";
   private latestPath = "";
+  private synthSourcePath = "";   // 当前汇总的源笔记路径(解析其 [[笔记]] 链接用)
 
   constructor(leaf: WorkspaceLeaf, actions: PanelActions) {
     super(leaf);
@@ -51,7 +52,26 @@ export class AiPanelView extends ItemView {
     // 不把每帧 Component addChild 到视图(会累积死 child);改为手动 unload + 这里注册一次兜底。
     this.register(() => this.unloadSynthComp());
     this.detachContext = this.actions.onContextChange((ctx) => this.renderContext(ctx));
+    // capture 阶段先于 Obsidian 原生 link-open:汇总输出里的 [[笔记]] 链接点 → 在上方预览区打开(Bug 3),
+    // 而非 native openLinkText 开到别处。data-href 是内部链接的 linkpath。
+    this.synthesisEl.addEventListener("click", this.onSynthesisClick, true);
   }
+
+  /** 汇总输出内部链接点击:resolve → 在预览区打开(复用 openInPreview=openInShiyue)。页码 (pN) 跳转延后。 */
+  private onSynthesisClick = (ev: MouseEvent): void => {
+    const a = (ev.target as HTMLElement | null)?.closest?.("a.internal-link") as HTMLAnchorElement | null;
+    const href = a?.dataset?.href;
+    if (!a || !href) return;  // 非内部链接 → 让 Obsidian 原生处理(外部链接等)
+    ev.preventDefault();
+    ev.stopPropagation();
+    const file = this.app.metadataCache.getFirstLinkpathDest(href, this.synthSourcePath);
+    if (file) {
+      void this.actions.openInPreview(file).catch((e) =>
+        new Notice(t("panel.err.openLink", { msg: e instanceof Error ? e.message : String(e) }), 8000));
+    } else {
+      new Notice(t("panel.err.linkNotFound", { link: href }), 4000);
+    }
+  };
 
   /** 按上下文切换按钮区;切换即取消在飞汇总 + 清空渲染(防残留 + 防泄漏)。 */
   private renderContext(ctx: PanelContext): void {
@@ -89,6 +109,7 @@ export class AiPanelView extends ItemView {
    *  取消 → synthesizeStream 静默结束,已渲染部分保留;非 abort 错 → Notice。 */
   private async runSynthesis(file: TFile): Promise<void> {
     this.teardownSynthesis();
+    this.synthSourcePath = file.path;   // 解析本笔记汇总输出里的 [[笔记]] 链接用
     const abort = new AbortController();
     this.synthAbort = abort;
     const loading = new LoadingNotice(this.app, t("panel.synth.loading"), () => abort.abort());
@@ -160,6 +181,7 @@ export class AiPanelView extends ItemView {
 
   async onClose(): Promise<void> {
     this.teardownSynthesis();
+    this.synthesisEl.removeEventListener("click", this.onSynthesisClick, true);
     this.detachContext?.();
     this.detachContext = null;
   }

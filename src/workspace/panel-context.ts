@@ -11,14 +11,16 @@ export type PanelContextKind = "pdf" | "knowledge-point" | "none";
 /** 最小文件形状(只需 extension),解耦 TFile,纯函数可单测。TFile 结构上满足它。 */
 export interface ContextFile { extension: string; }
 
-/** frontmatter 的 shiyue_type 字段(obsidian FrontMatterCache 是 { [k]: any })。 */
-export interface ContextFrontmatter { shiyue_type?: unknown; }
+/** frontmatter 的知识点标识字段。接受 `shiyue_type`(规范键,ADR-0001)与 `synthwell_type`
+ *  (改名前遗留键)——dev vault 与早期用户可能有改名前生成的笔记,两者都认,避免误判为 none(Bug 4)。 */
+export interface ContextFrontmatter { shiyue_type?: unknown; synthwell_type?: unknown; }
 
-/** 纯分类:文件扩展名 + frontmatter shiyue_type → kind。无副作用、可单测。 */
+/** 纯分类:文件扩展名 + frontmatter 知识点标识键 → kind。无副作用、可单测。
+ *  认 shiyue_type 或遗留的 synthwell_type(任一为 knowledge_point 即是知识点笔记)。 */
 export function classifyContext(file: ContextFile | null, fm: ContextFrontmatter | null): PanelContextKind {
   if (!file) return "none";
   if (file.extension === "pdf") return "pdf";
-  if (file.extension === "md" && fm?.shiyue_type === "knowledge_point") return "knowledge-point";
+  if (file.extension === "md" && (fm?.shiyue_type === "knowledge_point" || fm?.synthwell_type === "knowledge_point")) return "knowledge-point";
   return "none";
 }
 

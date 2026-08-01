@@ -18,6 +18,9 @@ export interface PanelActions {
   onContextChange(fn: (c: PanelContext) => void): () => void;
   extractBatch(): Promise<void>;
   extractSelection(): Promise<void>;
+  /** 在上方预览区打开任意文件(PDF 或知识点笔记)。复用 openInShiyue:有文档→同 split 新 tab,空→替换。
+   *  汇总输出里的 [[笔记]] 链接点击走此(Bug 3:原 native openLinkText 不开在预览区)。 */
+  openInPreview(file: TFile): Promise<void>;
   /** 流式汇总:逐帧 onChunk(markdown, sparse);signal 取消静默结束;非 abort 错抛出。 */
   synthesize(file: TFile, onChunk: (markdown: string, sparse: boolean) => void, signal: AbortSignal): Promise<void>;
 }
@@ -59,19 +62,20 @@ export class ShiyueWorkspace implements PanelActions {
   getCurrentSelection(): SelInfo | null { return this.cache.get(); }
   onFileChange(fn: (f: TFile | null) => void): () => void { return this.tracker.onChange(fn); }
   onContextChange(fn: (c: PanelContext) => void): () => void { return this.panelCtx.onChange(fn); }
+  openInPreview(file: TFile): Promise<void> { return this.openInShiyue(file); }
   synthesize(file: TFile, onChunk: (markdown: string, sparse: boolean) => void, signal: AbortSignal): Promise<void> {
     return this.synthesisController.synthesize(file, onChunk, signal);
   }
 
   async extractBatch(): Promise<void> {
     const file = this.tracker.get();
-    if (!file) { new Notice(t("notice.noPdf")); return; }
+    if (!file || file.extension !== "pdf") { new Notice(t("notice.noPdf")); return; }
     await this.controller.extractBatch(file);
   }
 
   async extractSelection(): Promise<void> {
     const file = this.tracker.get();
-    if (!file) { new Notice(t("notice.noPdf")); return; }
+    if (!file || file.extension !== "pdf") { new Notice(t("notice.noPdf")); return; }
     const sel = this.cache.get();
     if (!sel) { new Notice(t("notice.selectText"), 4000); return; }
     this.captureHandle?.setExtracting(true);   // 深抽进行中:藏浮按钮,不重复触发
@@ -142,11 +146,14 @@ export class ShiyueWorkspace implements PanelActions {
     const hasDoc = !!this.tracker.get() && this.isPreviewLeafValid();
     let target: WorkspaceLeaf;
     if (hasDoc) {
-      // 在 preview 的 tab 组(parent=WorkspaceTabs)内新建 tab。createLeafInParent 的 .d.ts 窄标
-      // WorkspaceSplit,运行时收 WorkspaceParent;cast 绕过。index=children 末尾追加。
-      // (round-2 fix:getLeaf(true) 会落到主根 split,不在右栏预览 split。)
-      const parent = preview.parent as any;
-      target = this.app.workspace.createLeafInParent(parent as import("obsidian").WorkspaceSplit, parent?.children?.length ?? 0);
+      // 同 split 新 tab:duplicateLeaf(leaf, "tab") 在 leaf 的 tab 组内复制为一个新 tab
+      // (obsidian.d.ts duplicateLeaf 的 leafType='tab' 重载,非 deprecated,自 1.1.0)。
+      // 关键:duplicateLeaf 按【激活 leaf】而非源 leaf 定位新 tab——ensureShiyueSplit 刚 setActiveLeaf(AI, focus),
+      // 若不先切回 preview,新 tab 会落进 AI 的 tab 组(下方)而非 preview 的(上方)(Bug 1)。
+      // 故 dup 前先把 preview 设为激活 leaf。副作用:duplicateLeaf 会先复制 preview 当前 PDF 视图,
+      // 随即 openFile 切到新文件 → 旧 transport 被 destroy(pdfjs 控制台 noise,无害,#1 仍正常渲染——已验)。
+      await this.app.workspace.setActiveLeaf(preview, { focus: false });
+      target = await this.app.workspace.duplicateLeaf(preview, "tab");
     } else {
       target = preview;  // 空 → 替换
     }
@@ -183,10 +190,21 @@ export class ShiyueWorkspace implements PanelActions {
    *  零 monkey-patch。frontmatter 取 metadataCache 缓存(同步)。 */
   private registerPanelContextTracking(): void {
     this.plugin.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
+      if (!leaf) { this.recomputeContext(); return; }
+      const vt = leaf.view?.getViewType?.();
+      if (vt === this.aiViewType) return;  // AI 面板自激活不改上下文,保留按钮启用
       const f = leafOfFile(leaf);
-      // AI 面板 leaf 自身激活(点按钮)→ 不改 activeFile,保留原上下文,避免按钮被禁用
-      if (leaf && leaf.view?.getViewType?.() === this.aiViewType) return;
       if (f !== undefined) this.activeFile = f;
+      // 跟踪激活的文件 leaf(PDF 或 markdown 笔记)为 previewLeaf。原只跟 PDF → native 打开的笔记
+      // 不更新 previewLeaf → previewLeaf 指向陈旧空 leaf → openInShiyue REPLACE 落进陈旧 leaf →
+      // Obsidian 新建窗打开(Bug 3b 链接跳转 / Bug1-#2 笔记在预览时 open in shiyue)。markdown 也跟。
+      // 仅 shiyue split 存在时跟(用户在工作区上下文);主编辑器随机笔记不抢 previewLeaf。
+      const splitOpen = this.app.workspace.getLeavesOfType(this.aiViewType).length > 0;
+      if (splitOpen && (vt === "pdf" || vt === "markdown")) {
+        this.previewLeaf = leaf;
+        this.tracker.set(f ?? null);
+        if (vt === "pdf") this.attachPreviewCapture();  // 浮按钮仅 PDF 有意义;md 上挂 mouseup 无害但无浮按钮
+      }
       this.recomputeContext();
     }));
     this.plugin.registerEvent(this.app.workspace.on("file-open", (file) => {

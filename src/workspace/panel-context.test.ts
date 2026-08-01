@@ -30,3 +30,11 @@ test("classifyContext: md 无 frontmatter → none", () => {
 test("classifyContext: 其它扩展名(如 canvas/json)→ none", () => {
   assert.equal(classifyContext({ extension: "canvas" } as any, null), "none");
 });
+
+test("classifyContext: md + 遗留 synthwell_type=knowledge_point → knowledge-point(Bug 4 回归)", () => {
+  // #03 改名前生成的笔记用 synthwell_type;classifyContext 须兼容,否则面板误判 none。
+  const legacyFm = { synthwell_type: "knowledge_point" } as any;
+  assert.equal(classifyContext(kp(), legacyFm), "knowledge-point");
+  // 新旧键同时存在:任一为 knowledge_point 即认。
+  assert.equal(classifyContext(kp(), { shiyue_type: "knowledge_point", synthwell_type: "knowledge_point" } as any), "knowledge-point");
+});
