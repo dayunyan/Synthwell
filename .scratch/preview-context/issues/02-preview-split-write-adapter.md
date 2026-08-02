@@ -29,10 +29,10 @@ interface PreviewSplit {
 - [x] 新 `src/workspace/preview-split.ts`:`PreviewSplit` 类(implements 上 interface),藏 `duplicateLeaf`/`createLeafBySplit`/`createLeafInParent`/`setActiveLeaf`;构造注入 `app` + `PreviewContext`(读 leaf)+ `aiViewType`。
 - [x] `ShiyueWorkspace`:删 `ensureShiyueSplit`/`toggleShiyueSplit`/`openInShiyue` 的布局实现,委托 `this.previewSplit.ensure/toggle/openInPreview`;`attachPreviewCapture` 留(读 `previewCtx.getPreviewLeaf()`)。`openInPreview`(PanelActions)改委托 `previewSplit.openInPreview`。
 - [x] hasDoc 新 tab 路径用 `createLeafInParent(preview.parent, index)`(替 `duplicateLeaf`)。
-- [ ] runtime 验(加 `[DEBUG-ps]`):`createLeafInParent` 后 sameParent=true + 无 Transport destroyed + #1 不破。若回归窗 → 回退 duplicateLeaf + 注释记 cosmetic。
+- [x] runtime 验(已通过 2026-08-02 HITL):`createLeafInParent` 后 sameParent=true + idx=1(同 WorkspaceTabs 组新 tab)+ **无 Transport destroyed**(noise 消除)+ #1 不破。赌注成,不回退。`[DEBUG-ps]` log 已清。
 - [x] `npm run build` clean;`node --test` 161 全绿不回归(PreviewSplit 无纯 seam 可单测——Obsidian 布局 API,人工验;同 #1 写侧)。
-- [ ] 人工验(5 项同 #01,确保不回归):开 PDF #1→#2 上方新 tab;native 双击 PDF 进预览区→浮按钮+抽取;synthesis 链接→笔记开预览区;预览有笔记时 open in shiyue PDF 不新建窗;开知识点笔记→面板切汇总。
-- [ ] 若 createLeafInParent 成功消 noise:确认 console 干净;若回退 duplicateLeaf:记 Transport noise 为已知 cosmetic(ADR-0004 风格)。
+- [x] 人工验(2026-08-02):开 PDF #1→#2 上方新 tab;native 双击 PDF 进预览区→浮按钮+抽取;synthesis 链接→笔记开预览区;预览有笔记时 open in shiyue PDF 不新建窗;开知识点笔记→面板切汇总——5 项不回归。
+- [x] 若 createLeafInParent 成功消 noise:确认 console 干净(createLeafInParent 不复制视图→无 transport churn)。赌注成,duplicateLeaf fallback 弃用。
 
 ## Out of scope
 - 不动 `PreviewContext`(#1 已成,稳定)。

@@ -73,9 +73,10 @@ export class ShiyuePreviewSplit implements PreviewSplit {
    *     createLeafInParent 在 WorkspaceTabs 上应加 tab(同组)而非 spawn 窗——建【空 leaf】(不复制视图)→
    *     openFile(#2) 现载 → 无 transport churn → 消 noise。obsidian.d.ts 声参为 WorkspaceSplit(与 WorkspaceTabs 为
    *     WorkspaceParent 兄弟子类),运行时实受任意 WorkspaceParent → 须 cast。
-   *   - 验证 gate([DEBUG-ps] log):createLeafInParent 后 target.parent === preview.parent(同组=tab)+ 无 Transport destroyed + #1 不破。
-   *     **若 spawn 窗或 #1 破 → 回退 duplicateLeaf:setActiveLeaf(preview,{focus:false}) + duplicateLeaf(preview,"tab"),
-   *     接受 noise 为 cosmetic(已验无害,ADR-0004 风格记)。不强行。**
+   *   - 验证(已通过 2026-08-02,HITL):createLeafInParent 后 target.parent === preview.parent(同组=tab,kind=WorkspaceTabs)
+   *     + 无 Transport destroyed + #1 不破 → 赌注成,Transport noise 消除。回退路径 duplicateLeaf 已弃(留备查):
+   *     若未来 Obsidian 升级致 spawn 窗或 #1 破,改回 setActiveLeaf(preview,{focus:false}) + duplicateLeaf(preview,"tab"),
+   *     接受 noise 为 cosmetic(已验无害)。
    *   - 新 tab 须为激活(currentTab 指它)previewCtx 才派生取到 target → 显式 setActiveLeaf(target) 兜底
    *     (createLeafInParent 是否自动激活未保证;setActive 幂等,已激活则 no-op)。 */
   async openInPreview(file: TFile): Promise<void> {
@@ -90,11 +91,6 @@ export class ShiyuePreviewSplit implements PreviewSplit {
       const children = (parent as unknown as { children?: unknown[] }).children;
       const idx = Array.isArray(children) ? children.length : 0;  // 末尾追加 → 新 tab
       target = this.app.workspace.createLeafInParent(parent, idx);
-      console.debug(
-        "[DEBUG-ps] createLeafInParent sameParent=", target.parent === preview.parent,
-        "parentKind=", (preview.parent as { constructor?: { name?: string } }).constructor?.name,
-        "idx=", idx,
-      );
       // 兜底激活新 tab:createLeafInParent 不保证设 currentTab;不激活则 previewCtx 派生旧 leaf →
       // attachPreviewCapture 会挂错 leaf。setActiveLeaf 幂等。
       await this.app.workspace.setActiveLeaf(target, { focus: false });
