@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — PreviewContext(本 adapter 读 `previewCtx.getPreviewLeaf()` 取目标 leaf)。
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 ## 设计(承 #1 的 β seam)
 
@@ -26,11 +26,11 @@ interface PreviewSplit {
 - **验证 gate**:实现后加 `[DEBUG-ps]` log:createLeafInParent 后 `target.parent === preview.parent`(同组=tab)+ 无 `Transport destroyed` + #1 不破。**若 spawn 窗或 #1 破 → 回退 duplicateLeaf + 接受 noise 为 cosmetic**(已验无害)。不强行。
 
 ## Acceptance criteria
-- [ ] 新 `src/workspace/preview-split.ts`:`PreviewSplit` 类(implements 上 interface),藏 `duplicateLeaf`/`createLeafBySplit`/`createLeafInParent`/`setActiveLeaf`;构造注入 `app` + `PreviewContext`(读 leaf)+ `aiViewType`。
-- [ ] `ShiyueWorkspace`:删 `ensureShiyueSplit`/`toggleShiyueSplit`/`openInShiyue` 的布局实现,委托 `this.previewSplit.ensure/toggle/openInPreview`;`attachPreviewCapture` 留(读 `previewCtx.getPreviewLeaf()`)。`openInPreview`(PanelActions)改委托 `previewSplit.openInPreview`。
-- [ ] hasDoc 新 tab 路径用 `createLeafInParent(preview.parent, index)`(替 `duplicateLeaf`)。
+- [x] 新 `src/workspace/preview-split.ts`:`PreviewSplit` 类(implements 上 interface),藏 `duplicateLeaf`/`createLeafBySplit`/`createLeafInParent`/`setActiveLeaf`;构造注入 `app` + `PreviewContext`(读 leaf)+ `aiViewType`。
+- [x] `ShiyueWorkspace`:删 `ensureShiyueSplit`/`toggleShiyueSplit`/`openInShiyue` 的布局实现,委托 `this.previewSplit.ensure/toggle/openInPreview`;`attachPreviewCapture` 留(读 `previewCtx.getPreviewLeaf()`)。`openInPreview`(PanelActions)改委托 `previewSplit.openInPreview`。
+- [x] hasDoc 新 tab 路径用 `createLeafInParent(preview.parent, index)`(替 `duplicateLeaf`)。
 - [ ] runtime 验(加 `[DEBUG-ps]`):`createLeafInParent` 后 sameParent=true + 无 Transport destroyed + #1 不破。若回归窗 → 回退 duplicateLeaf + 注释记 cosmetic。
-- [ ] `npm run build` clean;`node --test` 161 全绿不回归(PreviewSplit 无纯 seam 可单测——Obsidian 布局 API,人工验;同 #1 写侧)。
+- [x] `npm run build` clean;`node --test` 161 全绿不回归(PreviewSplit 无纯 seam 可单测——Obsidian 布局 API,人工验;同 #1 写侧)。
 - [ ] 人工验(5 项同 #01,确保不回归):开 PDF #1→#2 上方新 tab;native 双击 PDF 进预览区→浮按钮+抽取;synthesis 链接→笔记开预览区;预览有笔记时 open in shiyue PDF 不新建窗;开知识点笔记→面板切汇总。
 - [ ] 若 createLeafInParent 成功消 noise:确认 console 干净;若回退 duplicateLeaf:记 Transport noise 为已知 cosmetic(ADR-0004 风格)。
 
@@ -41,3 +41,4 @@ interface PreviewSplit {
 
 ## Comments
 - 2026-08-02 — grill 承 #1 β seam 定。源:architecture-report 候选 #2(Worth exploring)。#1 完结后,写侧是唯一未收进 adapter 的脆性布局 API。createLeafInParent 赌注是附带优化(消 noise),非 #2 主旨——主旨是 locality(布局 fragility 收进小 interface)。
+- 2026-08-02 — 实现完成(/implement + /code-review 改进;待人工验)。新增 `src/workspace/preview-split.ts`:`export interface PreviewSplit`(小 interface 藏大脆性,调用方依赖此面可注 fake)+ `export class ShiyuePreviewSplit implements PreviewSplit`(ensure/toggle/openInPreview,藏 createLeafBySplit/createLeafInParent/setActiveLeaf;duplicateLeaf 赌注替为 createLeafInParent,fallback 记于注释)。`ShiyueWorkspace` 持 `previewSplit: PreviewSplit`(interface 类型),删 `ensureShiyueSplit`(内部 only,移入 adapter),`toggleShiyueSplit`/`openInShiyue` 转薄 orchestrator(布局委托 previewSplit,选区接线 captureHandle 留本类),`attachPreviewCapture` 留(读 previewCtx.getPreviewLeaf()),`openInPreview`(PanelActions)→ openInShiyue → previewSplit.openInPreview 传递委托。hasDoc 新 tab 用 `createLeafInParent(preview.parent, children.length)` + 显式 setActiveLeaf(target) 兜底 currentTab + `[DEBUG-ps]` 验证 gate(sameParent/parentKind/idx)。`npm run build` clean;`node --test` 161/161 绿不回归(无新纯 seam,同 #1 写侧)。/code-review Spec 发现「interface 未声明」→ 改:interface + ShiyuePreviewSplit implements(PanelActions 先例);其余 smell(Feature Envy/cast noise = obsidian.d.ts 缺口 + #1 不动 PreviewContext out-of-scope;[DEBUG-ps] log = spec 强制,非 speculative;aiViewType 串 = 既有 pattern;existingAi 一行 dup 跨类不抽)留并注由。runtime + 5 项人工验待 HITL(开 Obsidian 验 createLeafInParent 不 spawn 窗/消 noise/不回归)→ status ready-for-human。若赌注败,preview-split.ts 注释已记 duplicateLeaf fallback 路径。
