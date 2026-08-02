@@ -4,13 +4,10 @@
 // 会让 Node 尝试解析 types-only 的 obsidian 包(main:"")而 ERR_MODULE_NOT_FOUND,
 // 连带 settings.test.ts 失败。UI 与 obsidian 耦合,无单测,人工验。
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
-import { OpenAICompatibleProvider } from "./core/llm/llm-service";
 import { UsageTracker } from "./core/llm/usage";
 import { t } from "./i18n";
+import { buildProvider, SHIYUE_API_KEY_ID } from "./workspace/llm-provider";
 import type { ShiyueSettings } from "./settings";
-
-/** SecretStorage key id(小写字母+连字符,符合 SecretStorage 约定)。 */
-const SHIYUE_API_KEY_ID = "shiyue-api-key";
 
 export class ShiyueSettingTab extends PluginSettingTab {
   private plugin: { settings: ShiyueSettings; saveSettings(): Promise<void>; };
@@ -43,9 +40,9 @@ export class ShiyueSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName(t("settings.baseURL.name")).addText(tc => tc.setValue(this.plugin.settings.baseURL).onChange(async v => { this.plugin.settings.baseURL = v.trim(); await this.plugin.saveSettings(); }));
 
     new Setting(containerEl).setName(t("settings.test.name")).setDesc(t("settings.test.desc")).addButton(b => b.setButtonText(t("settings.test.button")).onClick(async () => {
+      const p = buildProvider(this.app, this.plugin.settings);
+      if (!p) { new Notice(t("notice.noApiKey")); return; }
       try {
-        const key = this.app.secretStorage.getSecret(SHIYUE_API_KEY_ID);
-        const p = new OpenAICompatibleProvider({ baseURL: this.plugin.settings.baseURL, apiKey: key ?? "", model: this.plugin.settings.model });
         const out = await p.chat([{ role: "user", content: "ping" }], { maxTokens: 5 });
         new Notice(t("settings.test.ok", { snippet: out.slice(0, 40) }));
       } catch (e) { new Notice(t("settings.test.fail", { msg: (e as Error).message })); }

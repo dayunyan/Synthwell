@@ -1,4 +1,4 @@
-// src/llm-service.ts
+// src/core/llm/llm-service.ts
 export interface ChatMsg { role: "system" | "user" | "assistant"; content: string; }
 export interface ChatOpts {
   model?: string; temperature?: number; maxTokens?: number;

@@ -1,6 +1,6 @@
 // src/workspace/extraction-controller.ts
 import { App, Plugin, TFile, Notice } from "obsidian";
-import { OpenAICompatibleProvider } from "../core/llm/llm-service.ts";
+import { buildProvider } from "./llm-provider.ts";
 import { PdfDocumentSource } from "../core/document/document-source.ts";
 import { NoteGenerator } from "../core/extraction/note-generator.ts";
 import { ExtractionState } from "../core/extraction/extraction-state.ts";
@@ -22,9 +22,8 @@ export class ExtractionController {
   /** 整篇批处理:取文本→分块→预估确认→map(每块≥1 保底)→去重→生成笔记。 */
   async extractBatch(file: TFile): Promise<void> {
     const s = this.settings();
-    const apiKey = this.app.secretStorage.getSecret("shiyue-api-key") ?? "";  // 原样(Plan 2 验证可工作)
-    if (!apiKey) { new Notice(t("notice.noApiKey")); return; }
-    const provider = new OpenAICompatibleProvider({ baseURL: s.baseURL, apiKey: apiKey as string, model: s.model });
+    const provider = buildProvider(this.app, s);
+    if (!provider) { new Notice(t("notice.noApiKey")); return; }
     const noteGen = new NoteGenerator(this.app.vault.adapter as any, { notesPath: s.notesPath, model: s.model });
     const pricing = s.pricing.find(p => p.model === s.model) ?? s.pricing[0];
     const state = new ExtractionState(this.app.vault.adapter as any);
@@ -47,9 +46,8 @@ export class ExtractionController {
   /** 选区深抽:选中段 + 上下文 ±2 页 + 已有标题 → AI 抽单点 → 生成笔记 + 打开。 */
   async extractSelection(file: TFile, sel: SelInfo): Promise<void> {
     const s = this.settings();
-    const apiKey = this.app.secretStorage.getSecret("shiyue-api-key") ?? "";
-    if (!apiKey) { new Notice(t("notice.noApiKey")); return; }
-    const provider = new OpenAICompatibleProvider({ baseURL: s.baseURL, apiKey: apiKey as string, model: s.model });
+    const provider = buildProvider(this.app, s);
+    if (!provider) { new Notice(t("notice.noApiKey")); return; }
     const source = new PdfDocumentSource(file, this.app, this.plugin);
     const doc = await source.getDocument();
     if (!doc) { new Notice(t("extract.pdfNotLoaded")); return; }

@@ -1,4 +1,4 @@
-// src/vault-fs.ts — vault adapter 路径/目录小工具。
+// src/core/fs/vault-fs.ts — vault adapter 路径/目录小工具。
 // Obsidian DataAdapter.mkdir 单层(等同 fs.mkdir 无 recursive),write 不自动建父目录,
 // 故写 .shiyue/x.json 或 拾阅笔记/知识点/书/y.md 前须逐级建目录,否则 ENOENT。
 

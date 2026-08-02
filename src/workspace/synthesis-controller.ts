@@ -1,6 +1,6 @@
 // src/workspace/synthesis-controller.ts
 import { App, TFile } from "obsidian";
-import { OpenAICompatibleProvider } from "../core/llm/llm-service.ts";
+import { buildProvider } from "./llm-provider.ts";
 import { Synthesizer, filterAssociated } from "../core/extraction/synthesizer.ts";
 import { parseKnowledgeNote } from "../core/extraction/note-parser.ts";
 import { t } from "../i18n/index.ts";
@@ -23,9 +23,8 @@ export class SynthesisController {
     signal?: AbortSignal,
   ): Promise<void> {
     const s = this.settings();
-    const apiKey = (this.app.secretStorage.getSecret("shiyue-api-key") ?? "") as string;
-    if (!apiKey) { throw new Error(t("notice.noApiKey")); }
-    const provider = new OpenAICompatibleProvider({ baseURL: s.baseURL, apiKey, model: s.model });
+    const provider = buildProvider(this.app, s);
+    if (!provider) { throw new Error(t("notice.noApiKey")); }
     const synth = new Synthesizer(provider);
 
     const current = parseKnowledgeNote(file.basename, await this.app.vault.read(file));

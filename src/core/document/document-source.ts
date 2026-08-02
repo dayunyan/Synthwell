@@ -1,4 +1,4 @@
-// src/document-source.ts
+// src/core/document/document-source.ts
 import type { TFile, App, Plugin } from "obsidian";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
