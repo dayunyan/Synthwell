@@ -13,6 +13,7 @@ import { t } from "../i18n/index.ts";
 import type { ShiyueSettings } from "../settings.ts";
 import type { SelInfo } from "../preview/selection-cache.ts";
 import type { ExtractionHandlers, ExtractionResult } from "./extraction-messages.ts";
+import { batchSuccessMarkdown, selectionSuccessMarkdown } from "./extraction-messages.ts";
 
 /** 抽取胶水:build provider/noteGen/state,调 core/extraction。从 main.ts 抽出。
  *  数据源:batch 用 PdfDocumentSource(file) file 级重读;selection 上下文同源(±2 页)。
@@ -53,7 +54,7 @@ export class ExtractionController {
     });
     loading?.hide();
     if (r.cancelled) return this.settle(handlers, { cancelled: true, kind: "cancelled", message: t("extract.cancelled") }, 2000);
-    if (r.count > 0) return this.settle(handlers, { cancelled: false, kind: "success", message: t("extract.success", { message: r.message, count: r.count, notesPath: s.notesPath }) }, 8000);
+    if (r.count > 0) return this.settle(handlers, { cancelled: false, kind: "success", message: batchSuccessMarkdown(r.count, s.notesPath) }, 8000);
     return this.settle(handlers, { cancelled: false, kind: "fail", message: t("extract.fail", { message: r.message }) }, 8000);
   }
 
@@ -94,7 +95,7 @@ export class ExtractionController {
       });
       const nf = this.app.vault.getAbstractFileByPath(path);
       if (nf instanceof TFile) await this.app.workspace.getLeaf().openFile(nf);
-      return this.settle(handlers, { cancelled: false, kind: "success", message: t("extract.generated", { title: point.title }) }, 4000);
+      return this.settle(handlers, { cancelled: false, kind: "success", message: selectionSuccessMarkdown(point.title) }, 4000);
     } catch (e) {
       loading?.hide();
       if (signal.aborted) return this.settle(handlers, { cancelled: true, kind: "cancelled", message: t("extract.cancelled") }, 2000);

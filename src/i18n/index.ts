@@ -93,12 +93,14 @@ export const MESSAGES = {
   "extract.selectionLabel": { "zh-CN": "精读中", en: "Close-reading" },
   "extract.pdfNotLoaded": { "zh-CN": "PDF 未加载完成", en: "PDF not finished loading" },
   "extract.cancelled": { "zh-CN": "已取消", en: "Cancelled" },
-  "extract.success": { "zh-CN": "✓ {message}:{count} 个知识点(见 {notesPath}/)", en: "✓ {message}: {count} knowledge points (see {notesPath}/)" },
   "extract.fail": { "zh-CN": "✗ {message}", en: "✗ {message}" },
   "extract.noResult": { "zh-CN": "未能抽取(模型未返回有效结果)", en: "Could not refine (model returned no valid result)" },
-  "extract.generated": { "zh-CN": "✓ 已生成:{title}", en: "✓ Generated: {title}" },
   "extract.selectionFail": { "zh-CN": "精读失败:{msg}", en: "Close-read failed: {msg}" },
   "extract.progress": { "zh-CN": "{done}/{total} → {points} 点", en: "{done}/{total} → {points} points" },
+  // #04 提取消息上下文(面板气泡专用,区别于 Notice 文案):成功终态 / 进行中。复用 extract.cancelled(取消,中性)。
+  "extract.msg.batchDone": { "zh-CN": "✓ 已抽 {count} 个知识点,已入库到 {notesPath}", en: "✓ Refined {count} knowledge points, saved to {notesPath}" },
+  "extract.msg.selectionDone": { "zh-CN": "✓ 已提炼:{title}", en: "✓ Refined: {title}" },
+  "extract.msg.selectionWorking": { "zh-CN": "精读中…", en: "Close-reading…" },
 
   // ---- honest-sparse 综合视图(synthesizer.ts buildSparseMarkdown;渲染给用户,非 prompt)----
   "synth.sparse.heading": { "zh-CN": "# 汇总:{title}", en: "# Synthesis: {title}" },

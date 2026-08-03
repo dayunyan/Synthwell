@@ -13,7 +13,7 @@ import {
 import {
   batchProgressMarkdown,
   selectionWorkingMarkdown,
-  extractionTerminal,
+  finalizeExtractionActions,
   type ExtractionHandlers,
   type ExtractionResult,
 } from "./extraction-messages.ts";
@@ -312,85 +312,89 @@ export class AiPanelView extends ItemView {
   /** 整篇提取:user-action(「提炼全书要点」)+ confirmCost 门 → 确认后 streaming agent-reply(进度
    *  「0/total」→ onProgress 更新「done/total,已抽 points 个」)→ 成功终态消息 / 取消(「已取消」)/ error。
    *  停止按钮在气泡内(AbortController 贯穿 controller)。门控由 #03 buttonRowEl disabled 保证一次一条。 */
-  private async runExtractBatch(): Promise<void> {
+  private runExtractBatch(): Promise<void> {
+    return this.runExtract({
+      label: t("panel.btn.batch"),
+      errKey: "panel.err.batch",
+      buildHandlers: (replyId, abort) => ({
+        signal: abort.signal,
+        onConfirmed: (total) => {   // confirmCost 通过后:append streaming reply「0/total」+ 显停止按钮
+          this.appendMessage({
+            id: replyId, kind: "agent-reply",
+            markdown: batchProgressMarkdown(0, total, 0), streaming: true, stop: () => abort.abort(),
+          });
+        },
+        onProgress: (done, total, points) => {   // 每块开始/结束 → 更新 reply 文本
+          const e = this.entries.get(replyId);
+          if (e instanceof AgentReplyEntry) e.setMarkdown(batchProgressMarkdown(done, total, points), "");
+        },
+      }),
+      run: (handlers) => this.actions.extractBatch(handlers),
+    });
+  }
+
+  /** 选区提取:user-action(「提炼选中要点」)+ streaming agent-reply(进行中「精读中…」)→ 成功终态
+   *  (「已提炼:<title>」)/ 取消(「已取消」)/ error。无 confirmCost 门(selection 无门)。 */
+  private runExtractSelection(): Promise<void> {
+    return this.runExtract({
+      label: t("panel.btn.selection"),
+      errKey: "panel.err.selection",
+      buildHandlers: (replyId, abort) => ({
+        signal: abort.signal,
+        onBegin: () => {   // early check 通过 → append streaming reply「精读中…」
+          this.appendMessage({
+            id: replyId, kind: "agent-reply",
+            markdown: selectionWorkingMarkdown(), streaming: true, stop: () => abort.abort(),
+          });
+        },
+      }),
+      run: (handlers) => this.actions.extractSelection(handlers),
+    });
+  }
+
+  /** 提取消息生命周期骨架(batch/selection 共用):收尾在飞 → 新 AbortController + replyId →
+   *  user-action → handlers → run(catch 另 error 消息)→ finalizeExtractionReply 终态化。
+   *  buildHandlers 由两路径各自定 stream 何时 append / 怎更新;run 调对应 workspace 动作。 */
+  private async runExtract(opts: {
+    label: string;
+    errKey: "panel.err.batch" | "panel.err.selection";
+    buildHandlers: (replyId: string, abort: AbortController) => ExtractionHandlers;
+    run: (handlers: ExtractionHandlers) => Promise<ExtractionResult>;
+  }): Promise<void> {
     this.finalizeStreamingExtraction();   // 兜底:不应有在飞,防御性收尾
     const abort = new AbortController();
     const replyId = newMessageId();
     this.extractAbort = abort;
     this.extractReplyId = replyId;
-    this.appendMessage({ id: newMessageId(), kind: "user-action", label: t("panel.btn.batch") });
-    const handlers: ExtractionHandlers = {
-      signal: abort.signal,
-      onConfirmed: (total) => {   // confirmCost 通过后:append streaming reply「0/total」+ 显停止按钮
-        this.appendMessage({
-          id: replyId, kind: "agent-reply",
-          markdown: batchProgressMarkdown(0, total, 0), streaming: true, stop: () => abort.abort(),
-        });
-      },
-      onProgress: (done, total, points) => {   // 每块开始/结束 → 更新 reply 文本
-        const e = this.entries.get(replyId);
-        if (e instanceof AgentReplyEntry) e.setMarkdown(batchProgressMarkdown(done, total, points), "");
-      },
-    };
+    this.appendMessage({ id: newMessageId(), kind: "user-action", label: opts.label });
+    const handlers = opts.buildHandlers(replyId, abort);
     let r: ExtractionResult;
-    try { r = await this.actions.extractBatch(handlers); }
+    try { r = await opts.run(handlers); }
     catch (e) {
       this.extractAbort = null; this.extractReplyId = null;
       this.appendMessage({
         id: newMessageId(), kind: "error",
-        message: t("panel.err.batch", { msg: e instanceof Error ? e.message : String(e) }),
+        message: t(opts.errKey, { msg: e instanceof Error ? e.message : String(e) }),
       });
       return;
     }
-    this.finalizeExtractionReply(replyId, abort.signal.aborted, r);
+    this.finalizeExtractionReply(replyId, r);
   }
 
-  /** 选区提取:user-action(「提炼选中要点」)+ streaming agent-reply(进行中「精读中…」)→ 成功终态
-   *  (「已提炼:<title>」)/ 取消(「已取消」)/ error。无 confirmCost 门(selection 无门)。 */
-  private async runExtractSelection(): Promise<void> {
-    this.finalizeStreamingExtraction();
-    const abort = new AbortController();
-    const replyId = newMessageId();
-    this.extractAbort = abort;
-    this.extractReplyId = replyId;
-    this.appendMessage({ id: newMessageId(), kind: "user-action", label: t("panel.btn.selection") });
-    const handlers: ExtractionHandlers = {
-      signal: abort.signal,
-      onBegin: () => {   // early check 通过 → append streaming reply「精读中…」
-        this.appendMessage({
-          id: replyId, kind: "agent-reply",
-          markdown: selectionWorkingMarkdown(), streaming: true, stop: () => abort.abort(),
-        });
-      },
-    };
-    let r: ExtractionResult;
-    try { r = await this.actions.extractSelection(handlers); }
-    catch (e) {
-      this.extractAbort = null; this.extractReplyId = null;
-      this.appendMessage({
-        id: newMessageId(), kind: "error",
-        message: t("panel.err.selection", { msg: e instanceof Error ? e.message : String(e) }),
-      });
-      return;
-    }
-    this.finalizeExtractionReply(replyId, abort.signal.aborted, r);
-  }
-
-  /** 终态化一条提取回复:success/cancelled → 终态化 reply(文本换 result.message);fail → 终态化 reply
-   *  (保留末帧,不显 save)+ 追加 error 消息。aborted(气泡内停止)→ cancelled 文本。提取无 save affordance。
-   *  未 append streaming reply 时(early fail / 取消于 confirmCost 门前)→ 仅按 result 追加消息。 */
-  private finalizeExtractionReply(replyId: string, aborted: boolean, r: ExtractionResult): void {
-    const term = extractionTerminal(r);
+  /** 终态化一条提取回复:据「是否已有 streaming reply」+ result 算三类动作(纯决策 finalizeExtractionActions),
+   *  面板执行 DOM。提取无 save affordance(终态化后 stop 摘除,不显 save)。 */
+  private finalizeExtractionReply(replyId: string, r: ExtractionResult): void {
     const entry = this.entries.get(replyId);
-    if (entry instanceof AgentReplyEntry) {
-      entry.setMarkdown(term.kind === "reply" ? term.markdown : selectionWorkingMarkdown(), "");
-      entry.update({ streaming: false, stop: undefined });   // 提取无 save affordance
-    } else if (term.kind === "reply") {
-      // 未 append streaming reply(cancelled 于 confirmCost 门前 / 早期返):补一条终态 reply
-      this.appendMessage({ id: replyId, kind: "agent-reply", markdown: term.markdown, streaming: false });
+    const actions = finalizeExtractionActions(entry instanceof AgentReplyEntry, r);
+    if (actions.setReplyMarkdown !== undefined && entry instanceof AgentReplyEntry) {
+      entry.setMarkdown(actions.setReplyMarkdown, "");
+      entry.update({ streaming: false, stop: undefined });
     }
-    if (term.kind === "error") {
-      this.appendMessage({ id: newMessageId(), kind: "error", message: term.message });
+    if (actions.appendTerminalReply !== undefined) {
+      this.appendMessage({ id: replyId, kind: "agent-reply", markdown: actions.appendTerminalReply, streaming: false });
+    }
+    if (actions.appendError !== undefined) {
+      this.appendMessage({ id: newMessageId(), kind: "error", message: actions.appendError });
     }
     if (this.extractReplyId === replyId) {
       this.extractReplyId = null;

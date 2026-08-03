@@ -48,13 +48,13 @@ test("t: setLocale en 后返回 en 文案", () => {
 
 test("t: 参数替换(zh)", () => {
   setLocale("zh-CN");
-  assert.equal(t("extract.generated", { title: "飞轮" }), "✓ 已生成:飞轮");
+  assert.equal(t("extract.msg.selectionDone", { title: "飞轮" }), "✓ 已提炼:飞轮");
 });
 
 test("t: 参数替换(en)", () => {
   const saved = getLocale();
   setLocale("en");
-  try { assert.equal(t("extract.generated", { title: "Flywheel" }), "✓ Generated: Flywheel"); }
+  try { assert.equal(t("extract.msg.selectionDone", { title: "Flywheel" }), "✓ Refined: Flywheel"); }
   finally { setLocale(saved); }
 });
 
