@@ -32,7 +32,10 @@ const SYNTH_H1_PREFIX = "# 汇总 - ";
  *  - body:`# 汇总 - <trigger title>` + synthesisMd 原样(无 ## 原文 / ## 关联 块——那是知识点专属)。
  *  幂等:同输入同输出(重汇总 = controller 覆写同路径,seam 每次产完整内容)。 */
 export function buildSynthesisNoteContent(input: BuildSynthesisNoteInput): string {
-  const fromLinks = dedupeByTitle(input.sources).map(s => `  - [[${s.title}]]`);
+  // 项须引号包裹成 YAML 双引号标量 `  - "[[title]]"`(与 renderNote 的 related 同模式):
+  // 裸 `  - [[title]]` 会被 YAML 解析为嵌套 flow seq [[ "title" ]] → Obsidian Properties
+  // 渲成 `[[[title]]]` 纯文本(非可点链接,图谱边也丢)。引号包裹 → string wikilink → 可点 + 图谱边。
+  const fromLinks = dedupeByTitle(input.sources).map(s => `  - "[[${escapeYamlScalar(s.title)}]]"`);
   const tags = dedupeTags(input.sources);
 
   const lines: string[] = ["---"];
@@ -59,6 +62,13 @@ export function buildSynthesisNoteContent(input: BuildSynthesisNoteInput): strin
 export function resolveSynthesisPath(triggerBasename: string, synthesisPath: string): string {
   const dir = synthesisPath.split("/").map(s => s.trim()).filter(Boolean).join("/");
   return `${dir}/汇总 - ${triggerBasename}.md`;
+}
+
+/** YAML 双引号标量转义:先转义反斜杠(否则末尾 \ 会吞闭合引号 → frontmatter 解析失败),
+ *  再转义双引号为 `\"`,最后换行→空格(单行标量,防标题跨行破坏 YAML)。
+ *  与 renderNote(note-generator.ts)的 source_text 转义同思路。 */
+function escapeYamlScalar(v: string): string {
+  return v.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ");
 }
 
 /** 源 KP 按标题去重(大小写不敏感,保留首次),保 synthesized_from 无重复双链。 */

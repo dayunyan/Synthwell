@@ -52,9 +52,9 @@ test("buildSynthesisNoteContent: synthesized_from = 源 KP [[title]] 双链列�
     ],
   });
   assert.ok(md.includes("synthesized_from:"), "有 synthesized_from 键");
-  assert.ok(md.includes("  - [[飞轮]]"), "含触发 KP 双链");
-  assert.ok(md.includes("  - [[网络效应]]"), "含关联 KP 双链");
-  assert.ok(md.includes("  - [[好战略坏战略]]"), "含关联 KP 双链");
+  assert.ok(md.includes('  - "[[飞轮]]"'), "含触发 KP 双链(引号标量)");
+  assert.ok(md.includes('  - "[[网络效应]]"'), "含关联 KP 双链(引号标量)");
+  assert.ok(md.includes('  - "[[好战略坏战略]]"'), "含关联 KP 双链(引号标量)");
 });
 
 test("buildSynthesisNoteContent: synthesized_from 按源列表顺序(触发在前,关联按给定序)", () => {
@@ -94,8 +94,41 @@ test("buildSynthesisNoteContent: 空源(仅触发)→ synthesized_from 仅触发
     sources: [note({ title: "飞轮" })],
   });
   assert.ok(md.includes("synthesized_from:"));
-  assert.ok(md.includes("  - [[飞轮]]"));
-  assert.equal((md.match(/  - \[\[/g) ?? []).length, 1, "仅一条双链");
+  assert.ok(md.includes('  - "[[飞轮]]"'), "双链为引号包裹的 YAML 标量(非裸 [[…]])");
+  assert.equal((md.match(/  - "\[\[/g) ?? []).length, 1, "仅一条双链");
+});
+
+// ── synthesized_from:YAML 标量语义(链接可点,非嵌套数组)─────────────────────
+// 回归 bug:综合笔记 synthesized_from 项裸写 `  - [[飞轮]]` → YAML 解析为嵌套 flow seq
+// [[ "飞轮" ]] → Obsidian Properties 渲成 `[[[飞轮]]]` 纯文本(非可点链接)。修:项加双引号
+// 成 `  - "[[飞轮]]"`(与 renderNote 的 related 同模式:quoted YAML 标量 → Obsidian 解析为
+// string wikilink → 渲染为可点链接 + 图谱边)。
+test("buildSynthesisNoteContent: synthesized_from 项引号包裹(对照 renderNote related 先例,防嵌套数组)", () => {
+  const md = buildSynthesisNoteContent({
+    ...BASE_INPUT,
+    sources: [note({ title: "飞轮" }), note({ title: "网络效应" })],
+  });
+  const fm = md.slice(0, md.indexOf("---", 3));
+  // 项须为 `  - "[[…]]"`(双引号包裹):YAML 标量 string,Obsidian 渲为可点 wikilink。
+  assert.ok(/  - "\[\[[^\]]+\]\]"/.test(fm), "每项为引号包裹的双链标量");
+  assert.ok(!/^  - \[\[.*\]\]$/m.test(fm), "无裸(无引号)双链项");
+  // 对照 renderNote(note-generator.ts)related 同模式:`  - "[[title]]"`。
+  assert.ok(fm.includes('  - "[[飞轮]]"') && fm.includes('  - "[[网络效应]]"'));
+});
+
+test("buildSynthesisNoteContent: synthesized_from 标题含双引号 → YAML 转义(引号包裹且内部引号转义)", () => {
+  // 标题含双引号:YAML 双引号标量内 `"` 须转义为 `\"`(否则闭合引号被吞 → 解析失败)。
+  // 与 renderNote 的 source_text 转义同思路(先 \\ 再 ")。
+  const md = buildSynthesisNoteContent({
+    ...BASE_INPUT,
+    synthesisMd: "(不含双链)",
+    sources: [note({ title: '含"引号"的标题' })],
+  });
+  const fm = md.slice(0, md.indexOf("---", 3));
+  assert.ok(fm.includes('  - "[[含\\"引号\\"的标题]]"'), "内部双引号转义为 \\\"");
+  // frontmatter 仍闭合(body # 标题在第二个 --- 后)
+  const fmEnd = md.indexOf("---", 3);
+  assert.ok(fmEnd > 0 && md.slice(fmEnd).includes("# 汇总"), "frontmatter 闭合");
 });
 
 // ── tags:源 KP tags 去重并集 ────────────────────────────────────────────────
