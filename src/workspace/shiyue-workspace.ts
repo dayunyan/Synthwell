@@ -86,7 +86,10 @@ export class ShiyueWorkspace implements PanelActions {
   async openSourcePage(noteFile: TFile, page: number): Promise<void> {
     const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
     const src = stripWikilink(String(fm?.source_pdf ?? ""));
-    const pdf = src ? this.app.metadataCache.getFirstLinkpathDest(src, noteFile.path) : null;
+    // 不用 getFirstLinkpathDest:source_pdf 书名常与笔记子文件夹同名(拾阅笔记/知识点/<书名>/),
+    // Obsidian resolver 命中文件夹(TFolder,非 TFile)→ 返 null →「找不到源 PDF」(#3)。
+    // 改显式按 basename + pdf 扩展名扫 vault,精准命中源 PDF 文件,绕开文件夹名碰撞。
+    const pdf = src ? (this.app.vault.getFiles().find(f => f.basename === src && f.extension === "pdf") ?? null) : null;
     if (!pdf) {
       new Notice(t("notice.sourcePdfNotFound", { pdf: src || noteFile.basename }), 6000);
       return;
