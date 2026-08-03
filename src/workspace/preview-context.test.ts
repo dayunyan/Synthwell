@@ -65,6 +65,11 @@ test("(d) md + 遗留 synthwell_type=knowledge_point → knowledge-point(Bug4 �
   assert.equal(ctx?.kind, "knowledge-point");
 });
 
+test("(d) md + shiyue_type=synthesis → synthesis(#03 综合笔记透传)", () => {
+  const ctx = derivePreviewContext(validChain([leaf(file("md", "synth.md"))]) as any, () => ({ shiyue_type: "synthesis" }));
+  assert.equal(ctx?.kind, "synthesis");
+});
+
 test("(d) 普通 md(无知识点标识)→ none", () => {
   const ctx = derivePreviewContext(validChain([leaf(file("md", "plain.md"))]) as any, () => ({}));
   assert.equal(ctx?.kind, "none");

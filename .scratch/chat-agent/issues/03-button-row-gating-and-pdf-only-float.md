@@ -4,13 +4,13 @@
 
 **Blocked by:** 02(按钮排在 slice 02 重构的 `buttonRowEl` 上挂门控逻辑)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] `panel-context.ts`:`PanelContextKind` 加 `"synthesis"`;`classifyContext` 认 `shiyue_type === "synthesis"`(优先于 knowledge-point 判定);`ContextFrontmatter` 已含 shiyue_type(无需改)。`panel-context.test.ts` 加 synthesis kind 测。
-- [ ] `PanelActions` 加 `onSelectionChange(fn: (has: boolean) => void): () => void`;`ShiyueWorkspace` 实现(订阅 `SelectionCache` 变化 → 回调 has-selection)。`ai-panel-view.ts` 订阅 → 切「提炼选中要点」按钮 disabled 态。
-- [ ] `renderContext` switch 4 态:pdf(两提取按钮,selection 无选区 disabled)/ knowledge-point(汇总按钮)/ synthesis(无按钮 + 信息提示「综合笔记 — 汇总自 N 个知识点」,N 读 synthesis 笔记 frontmatter `synthesized_from` 长度)/ none(禁用占位)。
-- [ ] 「提炼选中要点」无选区时 disabled(灰,不弹 error);有选区时 enabled。提取进行中整排 disabled(复用 `setExtracting` 开关,验证 `attachSelectionCapture` 现有机制)。
-- [ ] 浮动「精读选中」按钮 PDF-only:`attachPreviewCapture` 在 `PreviewContext.getKind() !== "pdf"` 时不挂(或挂后 kind 变非 pdf 即摘)。验证 kind 变化(切 PDF→笔记)时浮动按钮正确摘/挂。
-- [ ] i18n key(zh-CN+en):synthesis 信息提示模板(含 N)、按钮 disabled 态视觉(无需文案,样式驱动)。
-- [ ] 现有 170 测试绿。
+- [x] `panel-context.ts`:`PanelContextKind` 加 `"synthesis"`;`classifyContext` 认 `shiyue_type === "synthesis"`(优先于 knowledge-point 判定);`ContextFrontmatter` 加 `synthesized_from`。`panel-context.test.ts` 加 synthesis kind 测(+ `synthesisSourceCount` 纯辅助)。
+- [x] `PanelActions` 加 `onSelectionChange(fn: (has: boolean) => void): () => void`;`ShiyueWorkspace` 实现(订阅 `SelectionCache` 变化 → 回调 has-selection)。`ai-panel-view.ts` 订阅 → 切「提炼选中要点」按钮 disabled 态。
+- [x] `renderContext` switch 4 态:pdf(两提取按钮,selection 无选区 disabled)/ knowledge-point(汇总按钮)/ synthesis(无按钮 + 信息提示「综合笔记 — 汇总自 N 个知识点」,N 读 synthesis 笔记 frontmatter `synthesized_from` 长度)/ none(禁用占位)。
+- [x] 「提炼选中要点」无选区时 disabled(灰,不弹 error);有选区时 enabled。提取进行中整排 disabled(复用 `setExtracting` 开关,验证 `attachSelectionCapture` 现有机制)。
+- [x] 浮动「精读选中」按钮 PDF-only:`syncSelectionCapture`(原 `attachPreviewCapture` 改名)在 `PreviewContext.getKind() !== "pdf"` 时不挂 + 摘旧。kind 变化经 `previewCtx.onChange → syncSelectionCapture` 自动摘/挂。
+- [x] i18n key(zh-CN+en):`panel.hint.synthesis`(含 {n} 模板);按钮 disabled 态视觉样式驱动(无需文案)。
+- [x] 现有测试绿(188 → 200,新增 12)。
 - [ ] 手验:开 PDF → 两按钮(无选区 selection 灰,有选区亮)+ 浮动按钮出现;开 KP → 汇总按钮,无浮动按钮;开综合笔记 → 无按钮 + 「汇总自 N 个知识点」提示;开普通 md → 禁用占位,无浮动按钮。切 PDF→笔记→PDF 浮动按钮正确挂/摘。

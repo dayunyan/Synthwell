@@ -1,5 +1,5 @@
 // src/workspace/shiyue-workspace.ts
-import { App, Plugin, TFile, FuzzySuggestModal, Notice } from "obsidian";
+import { App, Plugin, TFile, FuzzySuggestModal, Notice, WorkspaceLeaf } from "obsidian";
 import { SelectionCache, type SelInfo } from "../preview/selection-cache.ts";
 import { attachSelectionCapture, type SelectionCaptureHandle } from "../preview/selection-capture.ts";
 import { PreviewContext } from "./preview-context.ts";
@@ -8,6 +8,7 @@ import { ExtractionController } from "./extraction-controller.ts";
 import { SynthesisController } from "./synthesis-controller.ts";
 import { stripWikilink } from "../core/extraction/note-parser.ts";
 import type { PanelContext } from "./panel-context.ts";
+import { synthesisSourceCount as synthesisSourceCountFm } from "./panel-context.ts";
 import { t } from "../i18n/index.ts";
 import type { ShiyueSettings } from "../settings.ts";
 
@@ -18,6 +19,15 @@ export interface PanelActions {
   getCurrentSelection(): SelInfo | null;
   onFileChange(fn: (f: TFile | null) => void): () => void;
   onContextChange(fn: (c: PanelContext) => void): () => void;
+  /** 选区有无变化订阅(#03):反映 SelectionCache 状态——有选区→true。
+   *  面板「提炼选中要点」按钮 disabled 态随此切换(无选区灰,不弹 error)。注册即回调当前值。 */
+  onSelectionChange(fn: (has: boolean) => void): () => void;
+  /** 抽取进行中订阅(#03):深抽(选区提取)进行中→true。面板整排 disabled 防重复触发。
+   *  复用 setExtracting 开关(同源信号亦藏浮按钮)。注册即回调当前值。 */
+  onExtractingChange(fn: (b: boolean) => void): () => void;
+  /** 综合笔记源知识点数 N(#03 信息提示):读 synthesis 笔记 frontmatter synthesized_from 长度。
+   *  非 synthesis / 缺失 → 0。纯读 metadataCache(无 IO)。 */
+  synthesisSourceCount(file: TFile): number;
   extractBatch(): Promise<void>;
   extractSelection(): Promise<void>;
   /** 在上方预览区打开任意文件(PDF 或知识点笔记)。复用 openInShiyue:有文档→同 split 新 tab,空→替换。
@@ -44,7 +54,7 @@ export const SHIYUE_LOGO_ATTR = "data-shiyue-logo";
  *  {preview-leaf, file, kind},不存 leaf ref → 无陈旧可 staleness(消三轮 bug 同源)。
  *  写侧布局操作(ensure/toggle/openInPreview)委托 PreviewSplit adapter——小 interface 藏大脆性
  *  (duplicateLeaf/createLeafBySplit/createLeafInParent/setActiveLeaf,各反直觉点注于 preview-split.ts)。
- *  本类持 previewSplit 实例,openInShiyue/logo onclick 改委托它;attachPreviewCapture(选区接线,非布局)留本类。
+ *  本类持 previewSplit 实例,openInShiyue/logo onclick 改委托它;syncSelectionCapture(选区接线,非布局,PDF-only)留本类。
  *
  *  分屏方向(obsidian.d.ts 实测,命名反直觉):
  *   - getLeaf('split','vertical')   → 新 leaf 在当前 active leaf 的【右边】
@@ -61,6 +71,11 @@ export class ShiyueWorkspace implements PanelActions {
   private controller: ExtractionController;
   private synthesisController: SynthesisController;
   private captureHandle: SelectionCaptureHandle | null = null;
+  /** 当前 capture 挂载的 leaf(同 leaf 不重复挂;切 leaf 才重挂)。null = 未挂。 */
+  private captureLeaf: WorkspaceLeaf | null = null;
+  /** 深抽进行中(#03):复用浮按钮 setExtracting 同源信号,亦驱动面板整排 disabled。 */
+  private extracting = false;
+  private extractingListeners = new Set<(b: boolean) => void>();
 
   constructor(app: App, plugin: Plugin, settings: () => ShiyueSettings, aiViewType: string) {
     this.app = app; this.plugin = plugin; this.settings = settings; this.aiViewType = aiViewType;
@@ -78,6 +93,18 @@ export class ShiyueWorkspace implements PanelActions {
   }
   onContextChange(fn: (c: PanelContext) => void): () => void {
     return this.previewCtx.onChange((ctx) => fn(ctx ?? { file: null, kind: "none" }));
+  }
+  onSelectionChange(fn: (has: boolean) => void): () => void {
+    return this.cache.onChange((sel) => fn(sel !== null));
+  }
+  onExtractingChange(fn: (b: boolean) => void): () => void {
+    this.extractingListeners.add(fn);
+    fn(this.extracting);
+    return () => { this.extractingListeners.delete(fn); };
+  }
+  synthesisSourceCount(file: TFile): number {
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter ?? null;
+    return synthesisSourceCountFm(fm);
   }
   openInPreview(file: TFile): Promise<void> { return this.openInShiyue(file); }
   synthesize(file: TFile, onChunk: (markdown: string, sparse: boolean) => void, signal: AbortSignal): Promise<void> {
@@ -148,9 +175,18 @@ export class ShiyueWorkspace implements PanelActions {
     if (!file || file.extension !== "pdf") { new Notice(t("notice.noPdf")); return; }
     const sel = this.cache.get();
     if (!sel) { new Notice(t("notice.selectText"), 4000); return; }
-    this.captureHandle?.setExtracting(true);   // 深抽进行中:藏浮按钮,不重复触发
+    this.setExtracting(true);   // 深抽进行中:藏浮按钮 + 面板整排 disabled(#03 复用同源信号)
     try { await this.controller.extractSelection(file, sel); }
-    finally { this.captureHandle?.setExtracting(false); }
+    finally { this.setExtracting(false); }
+  }
+
+  /** 深抽进行中开关(#03):同步浮按钮可见性(setExtracting on captureHandle)与面板整排 disabled
+   *  (onExtractingChange 监听)。同值 no-op;变化时 fire 监听。 */
+  private setExtracting(b: boolean): void {
+    if (this.extracting === b) return;
+    this.extracting = b;
+    this.captureHandle?.setExtracting(b);
+    for (const fn of this.extractingListeners) fn(b);
   }
 
   // ---- 分屏(布局委托 PreviewSplit adapter;选区接线留本类)----
@@ -160,38 +196,52 @@ export class ShiyueWorkspace implements PanelActions {
   async toggleShiyueSplit(): Promise<void> {
     this.captureHandle?.detach();
     this.captureHandle = null;
+    this.captureLeaf = null;
+    this.cache.clear();
     await this.previewSplit.toggle();
+    this.syncSelectionCapture();   // ensure 后按当前 kind 重挂(开 PDF → 浮按钮挂;非 PDF → 不挂)
   }
 
   // ---- 加载文件 ----
   /** 确保 split + 打开 file(布局:previewSplit.openInPreview——hasDoc?createLeafInParent 新 tab:替换 + openFile)。
-   *  布局完成后挂选区捕获(读 previewCtx.getPreviewLeaf() 取 target——非布局,留本类)。 */
+   *  布局完成后同步选区捕获(读 previewCtx.getKind() 取当前 kind——非布局,留本类)。 */
   async openInShiyue(file: TFile): Promise<void> {
     await this.previewSplit.openInPreview(file);
-    this.attachPreviewCapture();  // view 换了,重挂(leaf 来源现派生:新 tab 已激活 → 派生取到 target)
+    this.syncSelectionCapture();  // view 换了,按 kind 重挂/摘浮按钮
   }
 
-  /** 给 preview leaf 的 contentEl 挂 mouseup(→cache + 浮「深读」按钮)+ pointerdown(藏按钮)。
-   *  leaf 来源 previewCtx.getPreviewLeaf() 现派生(openInPreview 后新 tab 即激活,派生取到它)。 */
-  private attachPreviewCapture(): void {
+  /** 选区捕获 + 浮「精读选中」按钮 PDF-only(#03 修复):kind !== "pdf" 不挂(笔记/md 上下文不挂浮按钮,
+   *  避免点击失败 notice.noPdf 的脆性);切回 PDF 重挂。同 leaf 已挂则 no-op(避免每次 layout-change 重挂)。
+   *  切 leaf 时清 cache(旧选区不再属于新预览,面板按钮须返 disabled)。 */
+  private syncSelectionCapture(): void {
+    const kind = this.previewCtx.getKind();
+    if (kind !== "pdf") {
+      this.captureHandle?.detach();
+      this.captureHandle = null;
+      this.captureLeaf = null;
+      this.cache.clear();   // 非 PDF 上下文:旧选区作废(面板按钮不在非 PDF 显,但切回 PDF 前清掉防陈旧)
+      return;
+    }
+    const leaf = this.previewCtx.getPreviewLeaf();
+    if (this.captureHandle && this.captureLeaf === leaf) return;  // 同 leaf 已挂 → no-op
     this.captureHandle?.detach();
     this.captureHandle = null;
-    const leaf = this.previewCtx.getPreviewLeaf();
-    // leaf.view 是 View(只有 containerEl);原生 PDF view 是 ItemView 子类,运行时有 contentEl
-    const view = leaf?.view as (import("obsidian").View & { contentEl?: HTMLElement }) | null;
-    const root = view?.contentEl ?? view?.containerEl ?? null;
-    if (!root || !leaf) return;
+    this.captureLeaf = leaf;
+    this.cache.clear();   // 新 PDF(或切 tab):旧选区不属于此预览,清掉让按钮 disabled
+    if (!leaf) return;
     this.captureHandle = attachSelectionCapture(leaf, this.cache, {
       onDeepExtract: () => { void this.extractSelection(); },
     });
   }
 
   // ---- logo 注入(被动 DOM,在 graph view contentEl 右上角加 📖)----
-  /** 注册 layout-change 监听(logo 注入)+ previewCtx 的 4 事件(上下文派生)。plugin.registerEvent 管自动 cleanup。 */
+  /** 注册 layout-change 监听(logo 注入)+ previewCtx 的 4 事件(上下文派生)。plugin.registerEvent 管自动 cleanup。
+   *  #03:订阅上下文变化 → syncSelectionCapture(切 PDF→笔记→PDF 时浮按钮正确摘/挂;PDF-only)。 */
   registerLogoInjector(): void {
     this.plugin.registerEvent(this.app.workspace.on("layout-change", () => this.injectLogos()));
     this.injectLogos();
     this.previewCtx.registerEvents();
+    this.previewCtx.onChange(() => this.syncSelectionCapture());
   }
 
   private injectLogos(): void {
@@ -217,7 +267,12 @@ export class ShiyueWorkspace implements PanelActions {
   }
 
   /** 卸载时摘监听(main.ts onunload 调)。 */
-  destroy(): void { this.captureHandle?.detach(); this.captureHandle = null; }
+  destroy(): void {
+    this.captureHandle?.detach();
+    this.captureHandle = null;
+    this.captureLeaf = null;
+    this.extractingListeners.clear();
+  }
 }
 
 class ShiyuePdfPickerModal extends FuzzySuggestModal<TFile> {

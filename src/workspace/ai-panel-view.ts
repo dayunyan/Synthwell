@@ -38,6 +38,15 @@ export class AiPanelView extends ItemView {
   private buttonRowEl!: HTMLElement;
   private inputEl!: HTMLInputElement;
   private detachContext: (() => void) | null = null;
+  private detachSelection: (() => void) | null = null;
+  private detachExtracting: (() => void) | null = null;
+
+  /** #03 按钮排门控状态:hasSelection(选区有无,驱动「提炼选中要点」disabled)/
+   *  extracting(深抽进行中,整排 disabled)。currentButtons + selBtn 随 renderContext 重建。 */
+  private hasSelection = false;
+  private extracting = false;
+  private currentButtons: HTMLButtonElement[] = [];
+  private selBtn: HTMLButtonElement | null = null;
 
   /** 消息模型(id → 渲染条目)。每条 agent-reply 自持 Component;user-action/error 仅静态 DOM。 */
   private entries = new Map<string, MessageEntry>();
@@ -84,6 +93,9 @@ export class AiPanelView extends ItemView {
     this.messagesEl.addEventListener("click", this.onMessagesClick, true);
 
     this.detachContext = this.actions.onContextChange((ctx) => this.renderContext(ctx));
+    // #03:选区有无 → 「提炼选中要点」按钮 disabled 态;深抽进行中 → 整排 disabled。
+    this.detachSelection = this.actions.onSelectionChange((has) => this.onSelectionChange(has));
+    this.detachExtracting = this.actions.onExtractingChange((b) => this.onExtractingChange(b));
   }
 
   /** 滚动事件:据距底距离更新粘底状态。 */
@@ -141,34 +153,67 @@ export class AiPanelView extends ItemView {
   }
 
   /** 按上下文只重渲按钮排;不清消息流(消息跨上下文持久,反馈 #2)。
-   *  在飞汇总:finalize(abort + streaming=false,保留已渲染部分),不丢消息。 */
+   *  在飞汇总:finalize(abort + streaming=false,保留已渲染部分),不丢消息。
+   *  4 态门控(#03):pdf(两提取按钮,selection 无选区 disabled)/ knowledge-point(汇总按钮)/
+   *  synthesis(无按钮 + 信息提示「综合笔记 — 汇总自 N 个知识点」)/ none(禁用占位)。 */
   private renderContext(ctx: PanelContext): void {
     this.finalizeStreamingSynthesis();
     this.buttonRowEl.empty();
+    this.currentButtons = [];
+    this.selBtn = null;
 
     if (ctx.kind === "pdf") this.renderExtractionActions();
     else if (ctx.kind === "knowledge-point" && ctx.file) this.renderSynthesisActions(ctx.file);
+    else if (ctx.kind === "synthesis" && ctx.file) this.renderSynthesisInfo(ctx.file);
     else this.renderDisabled();
+    this.syncButtons();   // 初渲染按当前 hasSelection / extracting 定 disabled 态
   }
 
   // ---- pdf:两抽取按钮(此 slice 仍走 Notice;slice 04 迁移到消息)----
   private renderExtractionActions(): void {
     const batchBtn = this.buttonRowEl.createEl("button", { text: t("panel.btn.batch") });
-    const selBtn = this.buttonRowEl.createEl("button", { text: t("panel.btn.selection") });
+    this.selBtn = this.buttonRowEl.createEl("button", { text: t("panel.btn.selection") });
     const onErr = (key: "panel.err.batch" | "panel.err.selection") => (e: unknown) =>
       new Notice(t(key, { msg: e instanceof Error ? e.message : String(e) }), 8000);
     batchBtn.onclick = () => { void this.actions.extractBatch().catch(onErr("panel.err.batch")); };
-    selBtn.onclick = () => { void this.actions.extractSelection().catch(onErr("panel.err.selection")); };
+    this.selBtn.onclick = () => { void this.actions.extractSelection().catch(onErr("panel.err.selection")); };
+    this.currentButtons = [batchBtn, this.selBtn];
   }
 
   // ---- knowledge-point:汇总按钮(存回改为汇总回复的 affordance,不在按钮排)----
   private renderSynthesisActions(file: TFile): void {
     const btn = this.buttonRowEl.createEl("button", { text: t("panel.btn.synthesis") });
     btn.onclick = () => { void this.startSynthesis(file); };
+    this.currentButtons = [btn];
+  }
+
+  // ---- synthesis:无操作按钮 + 信息提示「综合笔记 — 汇总自 N 个知识点」(#03)----
+  // N 读 synthesis 笔记 frontmatter synthesized_from 长度(经 PanelActions.synthesisSourceCount)。
+  private renderSynthesisInfo(file: TFile): void {
+    const n = this.actions.synthesisSourceCount(file);
+    this.buttonRowEl.createEl("p", { cls: "shiyue-ai-hint", text: t("panel.hint.synthesis", { n }) });
   }
 
   private renderDisabled(): void {
     this.buttonRowEl.createEl("p", { cls: "shiyue-ai-hint", text: t("panel.hint.disabled") });
+  }
+
+  /** #03 选区变化 → 更新 hasSelection + 「提炼选中要点」按钮 disabled 态(extracting 优先整排 disabled)。 */
+  private onSelectionChange(has: boolean): void {
+    this.hasSelection = has;
+    this.syncButtons();
+  }
+
+  /** #03 深抽进行中 → 整排 disabled 防重复触发(复用 setExtracting 同源信号)。 */
+  private onExtractingChange(b: boolean): void {
+    this.extracting = b;
+    this.syncButtons();
+  }
+
+  /** 同步按钮 disabled 态:extracting → 全 disabled;否则「提炼选中要点」随 hasSelection,余启用。 */
+  private syncButtons(): void {
+    for (const btn of this.currentButtons) btn.disabled = this.extracting;
+    if (!this.extracting && this.selBtn) this.selBtn.disabled = !this.hasSelection;
   }
 
   /** 启动汇总(含覆盖确认门,ADR-0006):点「汇总关联笔记」时 lazy 查综合笔记已存在 →
@@ -328,6 +373,10 @@ export class AiPanelView extends ItemView {
     this.messagesEl.removeEventListener("click", this.onMessagesClick, true);
     this.detachContext?.();
     this.detachContext = null;
+    this.detachSelection?.();
+    this.detachSelection = null;
+    this.detachExtracting?.();
+    this.detachExtracting = null;
     this.unloadAllEntries();
   }
 }

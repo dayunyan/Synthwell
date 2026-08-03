@@ -46,6 +46,7 @@ export const MESSAGES = {
   "panel.btn.saveSynth": { "zh-CN": "存回笔记", en: "Save to note" },
   "panel.msg.synthSaved": { "zh-CN": "✓ 已存为综合笔记 [[{link}]]", en: "✓ Saved as synthesis note [[{link}]]" },
   "panel.hint.disabled": { "zh-CN": "打开 PDF 或知识点笔记以启用", en: "Open a PDF or knowledge-point note to enable" },
+  "panel.hint.synthesis": { "zh-CN": "综合笔记 — 汇总自 {n} 个知识点", en: "Synthesis note — synthesized from {n} knowledge points" },
   "panel.synth.loading": { "zh-CN": "汇总中", en: "Synthesizing" },
   "panel.synth.working": { "zh-CN": "综合关联笔记中…", en: "Synthesizing related notes…" },
   "panel.err.batch": { "zh-CN": "提炼失败:{msg}", en: "Refine failed: {msg}" },

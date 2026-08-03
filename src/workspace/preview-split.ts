@@ -46,7 +46,7 @@ export class ShiyuePreviewSplit implements PreviewSplit {
     await this.app.workspace.setActiveLeaf(preview, { focus: false });
     const ai = this.app.workspace.getLeaf("split", "horizontal") as WorkspaceLeaf;
     await ai.setViewState({ type: this.aiViewType, state: {} });
-    // preview 尚无文件,不挂选区捕获(等 openInPreview 的 openFile 后 view 稳定再挂——ShiyueWorkspace.attachPreviewCapture)
+    // preview 尚无文件,不挂选区捕获(等 openInPreview 的 openFile 后 view 稳定再挂——ShiyueWorkspace.syncSelectionCapture)
   }
 
   /** logo 点击:toggle 右侧两屏。已存在 → 收起(detach 预览 + AI leaf);不存在 → ensure。
@@ -92,12 +92,12 @@ export class ShiyuePreviewSplit implements PreviewSplit {
       const idx = Array.isArray(children) ? children.length : 0;  // 末尾追加 → 新 tab
       target = this.app.workspace.createLeafInParent(parent, idx);
       // 兜底激活新 tab:createLeafInParent 不保证设 currentTab;不激活则 previewCtx 派生旧 leaf →
-      // attachPreviewCapture 会挂错 leaf。setActiveLeaf 幂等。
+      // syncSelectionCapture 会挂错 leaf。setActiveLeaf 幂等。
       await this.app.workspace.setActiveLeaf(target, { focus: false });
     } else {
       target = preview;  // 空 → 替换
     }
     await target.openFile(file);
-    // 选区捕获挂载留 ShiyueWorkspace.attachPreviewCapture(选区接线,非布局)——openInPreview 返回后它读 previewCtx.getPreviewLeaf() 取 target。
+    // 选区捕获挂载留 ShiyueWorkspace.syncSelectionCapture(选区接线,非布局)——openInPreview 返回后它读 previewCtx.getKind()/getPreviewLeaf() 取 target。
   }
 }
