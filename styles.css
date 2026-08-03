@@ -6,40 +6,65 @@
 /* 预估花费弹窗按钮(ui/confirm-modal.ts confirmCost) */
 .shiyue-confirm-btns { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
 
-/* AI 面板(workspace/ai-panel-view.ts AiPanelView) */
-.shiyue-ai-panel { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.75rem; height: 100%; }
-.shiyue-ai-actions { display: flex; flex-direction: column; gap: 0.4rem; }
-.shiyue-ai-actions button { padding: 0.5rem; }
-.shiyue-ai-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+/* AI 面板(workspace/ai-panel-view.ts AiPanelView)— 聊天式 shell:
+ * 消息流 + 按钮排 + 禁用输入框。Obsidian CSS 变量随主题。 */
+.shiyue-ai-panel { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.6rem; height: 100%; }
+
+/* 消息流(滚,flex:1)。消息跨上下文切换持久;自动滚到底,用户上滚暂停。 */
+.shiyue-ai-messages { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+
+/* 按钮排(按需按钮,门控逻辑 slice 03)。 */
+.shiyue-ai-button-row { display: flex; flex-direction: column; gap: 0.4rem; }
+.shiyue-ai-button-row button { padding: 0.5rem; }
+.shiyue-ai-button-row button:disabled { opacity: 0.5; cursor: not-allowed; }
 .shiyue-ai-hint { color: var(--text-muted); font-style: italic; margin: 0; padding: 0.4rem 0; }
 
-/* 汇总结果区(workspace/ai-panel-view.ts,#05):MarkdownRenderer 渲染的综合摘要。
- * 默认空占位;汇总时 is-active 展开滚动。[[笔记]] 链接原生可点(openLinkText)。 */
-.shiyue-ai-synthesis { display: none; overflow: auto; }
-.shiyue-ai-synthesis.is-active {
-  display: block; flex: 1; min-height: 6rem;
-  padding: 0.5rem; border-top: 1px solid var(--background-modifier-border);
-}
-.shiyue-ai-synthesizing { color: var(--text-muted); font-style: italic; padding: 0.5rem 0; }
+/* 禁用输入框(v1 聊天 Agent 留位)。占位灰,禁用态弱化。 */
+.shiyue-ai-input { padding: 0.5rem; }
+.shiyue-ai-input:disabled { opacity: 0.6; cursor: not-allowed; }
+.shiyue-ai-input:disabled::placeholder { color: var(--text-muted); }
 
-/* 「存回笔记」按钮(#07):汇总有内容后显;次级样式(弱于主汇总按钮)。 */
-.shiyue-ai-synth-save { opacity: 0.85; }
-.shiyue-ai-synth-save:hover { opacity: 1; }
+/* 消息气泡。变体 --user(右对齐 accent 底)/ --agent(左对齐默认底)/ --error(错误底)。
+ * --streaming 光标动画(streaming 期)。 */
+.shiyue-msg { max-width: 90%; padding: 0.5rem 0.7rem; border-radius: var(--radius-s); word-break: break-word; }
+.shiyue-msg--user {
+  align-self: flex-end;
+  background: var(--interactive-accent); color: var(--text-on-accent);
+}
+.shiyue-msg--agent {
+  align-self: flex-start;
+  background: var(--background-secondary); color: var(--text-normal);
+}
+.shiyue-msg--error {
+  align-self: flex-start;
+  background: var(--background-modifier-error); color: var(--text-normal);
+}
+/* streaming 期内容末尾光标动画(提示产出中)。`--streaming` 变体(spec §6)。 */
+.shiyue-msg--streaming .shiyue-msg-content::after {
+  content: "▍"; margin-left: 0.1em; animation: shiyue-blink 1s step-end infinite;
+  color: var(--text-muted);
+}
+@keyframes shiyue-blink { 50% { opacity: 0; } }
+
+/* agent-reply 气泡内按钮:停止(streaming 期)/ 保存(streaming=false 且 affordance:'save')。
+ * 次级样式,弱于内容。 */
+.shiyue-msg-stop, .shiyue-msg-save {
+  margin-top: 0.4rem; padding: 0.15rem 0.6rem; font-size: 0.8rem; opacity: 0.85;
+}
+.shiyue-msg-stop:hover, .shiyue-msg-save:hover { opacity: 1; }
+.shiyue-msg-stop[hidden], .shiyue-msg-save[hidden] { display: none; }
 
 /* 溯源页码跳转 affordance(#07):`[[笔记]](pN)` 的 (pN) 段,decoratePageJumps 包成独立可点 span。
- * 与 [[笔记]] 链接并列、视觉区分(略弱 + accent 下划线提示可点),click 走 onSynthesisClick 捕获。 */
-.shiyue-ai-synthesis .shiyue-page-jump {
+ * 与 [[笔记]] 链接并列、视觉区分(略弱 + accent 下划线提示可点),click 走 onMessagesClick 捕获。
+ * 作用域从 .shiyue-ai-synthesis 迁到 .shiyue-msg(消息模型取代单 synthesisEl)。 */
+.shiyue-msg .shiyue-page-jump {
   cursor: pointer;
   color: var(--text-accent);
   border-bottom: 1px dotted var(--interactive-accent);
   margin-left: 0.1em;
   user-select: none;
 }
-.shiyue-ai-synthesis .shiyue-page-jump:hover { color: var(--interactive-accent); }
-.shiyue-ai-chat-placeholder {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  color: var(--text-muted); font-style: italic;
-}
+.shiyue-msg .shiyue-page-jump:hover { color: var(--interactive-accent); }
 
 /* 图谱 logo(Task 7:注入 .view-actions 头栏,inline,不再 absolute 浮位) */
 .shiyue-logo {

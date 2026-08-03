@@ -44,6 +44,7 @@ export const MESSAGES = {
   "panel.btn.selection": { "zh-CN": "提炼选中要点", en: "Refine selection" },
   "panel.btn.synthesis": { "zh-CN": "汇总关联笔记", en: "Synthesize related notes" },
   "panel.btn.saveSynth": { "zh-CN": "存回笔记", en: "Save to note" },
+  "panel.msg.synthSaved": { "zh-CN": "✓ 已存为综合笔记 [[{link}]]", en: "✓ Saved as synthesis note [[{link}]]" },
   "panel.hint.disabled": { "zh-CN": "打开 PDF 或知识点笔记以启用", en: "Open a PDF or knowledge-point note to enable" },
   "panel.synth.loading": { "zh-CN": "汇总中", en: "Synthesizing" },
   "panel.synth.working": { "zh-CN": "综合关联笔记中…", en: "Synthesizing related notes…" },
@@ -75,7 +76,6 @@ export const MESSAGES = {
   "notice.noPdfInVault": { "zh-CN": "vault 中没有 .pdf 文件", en: "No .pdf files in the vault" },
 
   // ---- 存回笔记 + 页码跳转(#07)----
-  "notice.synthSaved": { "zh-CN": "✓ 已存为综合笔记", en: "✓ Saved as synthesis note" },
   "notice.synthSaveFail": { "zh-CN": "✗ 存回失败:{msg}", en: "✗ Save failed: {msg}" },
   "synth.overwrite.title": { "zh-CN": "覆盖综合笔记?", en: "Overwrite synthesis note?" },
   "synth.overwrite.body": { "zh-CN": "已存在综合笔记,重新汇总将覆盖现有内容。继续?", en: "A synthesis note already exists. Re-synthesizing will overwrite it. Continue?" },
