@@ -8,3 +8,6 @@ docs/superpowers/spike/shiyue-spike-build.zip
 
 .DS_Store
 data.json
+
+# Claude Code 本地设置(机器级权限,不入仓;共享用 .claude/settings.json)
+.claude/settings.local.json

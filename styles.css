@@ -13,9 +13,9 @@
 /* 消息流(滚,flex:1)。消息跨上下文切换持久;自动滚到底,用户上滚暂停。 */
 .shiyue-ai-messages { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 0.5rem; }
 
-/* 按钮排(按需按钮,门控逻辑 slice 03)。 */
-.shiyue-ai-button-row { display: flex; flex-direction: column; gap: 0.4rem; }
-.shiyue-ai-button-row button { padding: 0.5rem; }
+/* 按钮排(按需按钮,门控逻辑 slice 03)。小圆角矩形,水平排列,窄面板自动折行。 */
+.shiyue-ai-button-row { display: flex; flex-direction: row; flex-wrap: wrap; gap: 0.4rem; }
+.shiyue-ai-button-row button { padding: 0.25rem 0.7rem; border-radius: var(--radius-m); font-size: var(--font-ui-small); }
 .shiyue-ai-button-row button:disabled { opacity: 0.5; cursor: not-allowed; }
 .shiyue-ai-hint { color: var(--text-muted); font-style: italic; margin: 0; padding: 0.4rem 0; }
 
