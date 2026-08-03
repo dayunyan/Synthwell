@@ -8,7 +8,7 @@
 
 **Blocked by:** None — can start immediately(承 preview-context #01/#02 的 openInPreview primitive)。
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 ## 设计决策(grill 定)
 
@@ -27,12 +27,12 @@
 - **PDF 页码导航 API = runtime-unknown(implement-time probe)**:原生 PDFView 是否暴露 `setPage`/`scrollToPage`/page hash?probe `previewCtx.getPreviewLeaf().view` 的 PDF view 成员。fallback:开到第 1 页 + Notice「页码跳转暂不可用」(不阻塞存回笔记)。
 
 ## Acceptance criteria
-- [ ] 存回笔记:`## 综合汇总` 章节创建/追加正确;`vault.process` 串行写;空 synthesis 亦可存;Notice 提示成功/失败(i18n)。
-- [ ] page-jump `(pN)` 可点(implement 选 (a) 或 (b));点击 → 开源 PDF + 导航到第 N 页(runtime 验;若 PDF view 无 page-nav API → fallback 开 p1 + Notice)。
-- [ ] `[[笔记]]` click 行为不变(仍 openInPreview 开笔记)—— 不回归 3b。
-- [ ] i18n:新增 user-facing key(panel.btn.saveSynth / notice.synthSaved / notice.synthSaveFail / notice.pageJumpUnavailable)走 `t()`,zh-CN+en;LLM prompt 不 i18n。
-- [ ] `npm run build` clean;`node --test` 全绿(synthesizer 若改输出格式 → 更新 `synthesizer.test.ts` 断言;存回笔记若抽纯逻辑「append synth section to note text」→ 单测)。
-- [ ] 人工验:汇总后「存回笔记」→ 笔记出现 `## 综合汇总` + 内容;点 `[[笔记]]` → 开笔记(不回归);点 `(pN)` → 开源 PDF 跳页 N(或 fallback Notice)。
+- [x] 存回笔记:`## 综合汇总` 章节创建/追加正确;`vault.process` 串行写;空 synthesis 亦可存;Notice 提示成功/失败(i18n)。 — 纯 seam `appendSynthesisSection`(synth-section.ts,9 单测)+ `SynthesisController.saveToNote` 走 `vault.process`(TFile)原子读改写;空 synthesis seam 已测;Notice `notice.synthSaved`/`synthSaveFail`。
+- [x] page-jump `(pN)` 可点(implement 选 (a) 或 (b));点击 → 开源 PDF + 导航到第 N 页(runtime 验;若 PDF view 无 page-nav API → fallback 开 p1 + Notice)。 — 选 (a) post-process DOM(`decoratePageJumps` 包 `.shiyue-page-jump` span);点击 → `openSourcePage` 读 frontmatter `source_pdf` → `openInShiyue` + `navigatePdfToPage`(JS API 探测 → DOM `[data-page-number]` 轮询 → 兜底滚 p1 + Notice)。runtime 页码导航待人工验。
+- [x] `[[笔记]]` click 行为不变(仍 openInPreview 开笔记)—— 不回归 3b。 — `onSynthesisClick` 先查 `.shiyue-page-jump`,否则 `a.internal-link` 走原 `openInPreview` 路径(未改)。
+- [x] i18n:新增 user-facing key(panel.btn.saveSynth / notice.synthSaved / notice.synthSaveFail / notice.pageJumpUnavailable)走 `t()`,zh-CN+en;LLM prompt 不 i18n。 — 四 key + `notice.sourcePdfNotFound`(源 PDF 缺失态)均走 `t()`、zh-CN+en;`buildSynthesisPrompt` 未动。
+- [x] `npm run build` clean;`node --test` 全绿(synthesizer 若改输出格式 → 更新 `synthesizer.test.ts` 断言;存回笔记若抽纯逻辑「append synth section to note text」→ 单测)。 — build clean;tsc 0 错;170 测试绿(161 + 9 新 synth-section)。选 (a) 不改 synthesizer 输出 → `synthesizer.test.ts` 不回归。
+- [ ] 人工验:汇总后「存回笔记」→ 笔记出现 `## 综合汇总` + 内容;点 `[[笔记]]` → 开笔记(不回归);点 `(pN)` → 开源 PDF 跳页 N(或 fallback Notice)。 — 待人工验(ADR-0005 记页码导航探测 + 兜底)。
 
 ## Out of scope
 - 不动 PreviewContext/PreviewSplit(#01/#02 已成稳定)。

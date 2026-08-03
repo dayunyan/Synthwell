@@ -78,7 +78,8 @@ function stripQuotes(v: string): string {
   return v;
 }
 
-function stripWikilink(v: string): string {
+/** 去首尾 `[[` / `]]`(frontmatter source_pdf 存为 `[[书名]]`)。导出供 workspace 层溯源解析复用(#07)。 */
+export function stripWikilink(v: string): string {
   return v.replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
 }
 

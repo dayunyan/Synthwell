@@ -39,6 +39,7 @@ export const MESSAGES = {
   "panel.btn.batch": { "zh-CN": "提炼全书要点", en: "Refine book highlights" },
   "panel.btn.selection": { "zh-CN": "提炼选中要点", en: "Refine selection" },
   "panel.btn.synthesis": { "zh-CN": "汇总关联笔记", en: "Synthesize related notes" },
+  "panel.btn.saveSynth": { "zh-CN": "存回笔记", en: "Save to note" },
   "panel.hint.disabled": { "zh-CN": "打开 PDF 或知识点笔记以启用", en: "Open a PDF or knowledge-point note to enable" },
   "panel.synth.loading": { "zh-CN": "汇总中", en: "Synthesizing" },
   "panel.synth.working": { "zh-CN": "综合关联笔记中…", en: "Synthesizing related notes…" },
@@ -68,6 +69,12 @@ export const MESSAGES = {
   "notice.selectText": { "zh-CN": "请先在 PDF 中选中一段文字", en: "Select a passage in the PDF first" },
   "notice.cantCreatePreview": { "zh-CN": "无法创建预览面板", en: "Could not create preview panel" },
   "notice.noPdfInVault": { "zh-CN": "vault 中没有 .pdf 文件", en: "No .pdf files in the vault" },
+
+  // ---- 存回笔记 + 页码跳转(#07)----
+  "notice.synthSaved": { "zh-CN": "✓ 已存回笔记", en: "✓ Saved to note" },
+  "notice.synthSaveFail": { "zh-CN": "✗ 存回失败:{msg}", en: "✗ Save failed: {msg}" },
+  "notice.sourcePdfNotFound": { "zh-CN": "找不到源 PDF:{pdf}", en: "Source PDF not found: {pdf}" },
+  "notice.pageJumpUnavailable": { "zh-CN": "页码跳转暂不可用,已打开第 1 页", en: "Page navigation unavailable; opened page 1" },
   "picker.title": { "zh-CN": "选择要在拾阅中打开的 PDF", en: "Choose a PDF to open in Shiyue" },
   "picker.placeholder": { "zh-CN": "搜索文件名…", en: "Search by filename…" },
 

@@ -3,6 +3,7 @@ import { App, TFile } from "obsidian";
 import { buildProvider } from "./llm-provider.ts";
 import { Synthesizer, filterAssociated } from "../core/extraction/synthesizer.ts";
 import { parseKnowledgeNote } from "../core/extraction/note-parser.ts";
+import { appendSynthesisSection } from "../core/extraction/synth-section.ts";
 import { t } from "../i18n/index.ts";
 import type { KnowledgeNote } from "../core/extraction/synthesizer.ts";
 import type { ShiyueSettings } from "../settings.ts";
@@ -45,5 +46,12 @@ export class SynthesisController {
       catch { /* 跳过无法解析的笔记 */ }
     }
     return out;
+  }
+
+  /** 存回笔记(spec §6「保存(可选)」):把综合摘要追加到当前知识点笔记的 `## 综合汇总` 章节。
+   *  用 vault.process 原子读-改-写(spec D4 串行写,防 file.saving 永真丢数据):fn 收最新内容
+   *  → appendSynthesisSection(纯 seam)→ 写回。空 synthesis 亦可存。非 abort 错抛出交面板提示。 */
+  async saveToNote(file: TFile, synthesis: string): Promise<void> {
+    await this.app.vault.process(file, (data) => appendSynthesisSection(data, synthesis));
   }
 }

@@ -28,6 +28,8 @@ export class AiPanelView extends ItemView {
   private latestMd = "";
   private latestPath = "";
   private synthSourcePath = "";   // 当前汇总的源笔记路径(解析其 [[笔记]] 链接用)
+  private synthFile: TFile | null = null;       // 当前汇总的知识点笔记(存回笔记用)
+  private synthSaveBtn: HTMLButtonElement | null = null;  // 「存回笔记」按钮(汇总有内容后显)
 
   constructor(leaf: WorkspaceLeaf, actions: PanelActions) {
     super(leaf);
@@ -57,9 +59,28 @@ export class AiPanelView extends ItemView {
     this.synthesisEl.addEventListener("click", this.onSynthesisClick, true);
   }
 
-  /** 汇总输出内部链接点击:resolve → 在预览区打开(复用 openInPreview=openInShiyue)。页码 (pN) 跳转延后。 */
+  /** 汇总输出点击:两个 affordance(#07 grill 定)——
+   *   - `.shiyue-page-jump`((pN) 部分)→ 开相邻笔记的源 PDF + 跳第 N 页(decoratePageJumps 包的 span)。
+   *   - `a.internal-link`([[笔记]] 部分)→ 在预览区开该笔记(不变,复用 openInPreview=openInShiyue)。
+   *  capture 阶段先于 Obsidian 原生 link-open;非这两类 → 放行原生(外部链接等)。 */
   private onSynthesisClick = (ev: MouseEvent): void => {
-    const a = (ev.target as HTMLElement | null)?.closest?.("a.internal-link") as HTMLAnchorElement | null;
+    const tgt = ev.target as HTMLElement | null;
+    const pj = tgt?.closest?.(".shiyue-page-jump") as HTMLElement | null;
+    if (pj) {
+      ev.preventDefault(); ev.stopPropagation();
+      const href = pj.dataset.href ?? "";
+      const page = Number(pj.dataset.page);
+      if (!href || !Number.isFinite(page)) return;
+      const noteFile = this.app.metadataCache.getFirstLinkpathDest(href, this.synthSourcePath);
+      if (noteFile) {
+        void this.actions.openSourcePage(noteFile, page).catch((e) =>
+          new Notice(t("panel.err.openLink", { msg: e instanceof Error ? e.message : String(e) }), 8000));
+      } else {
+        new Notice(t("panel.err.linkNotFound", { link: href }), 4000);
+      }
+      return;
+    }
+    const a = tgt?.closest?.("a.internal-link") as HTMLAnchorElement | null;
     const href = a?.dataset?.href;
     if (!a || !href) return;  // 非内部链接 → 让 Obsidian 原生处理(外部链接等)
     ev.preventDefault();
@@ -73,10 +94,42 @@ export class AiPanelView extends ItemView {
     }
   };
 
+  /** MarkdownRenderer 渲完后,把 `[[笔记]](pN)` 里的 `(pN)` 文本节点包成独立可点 `.shiyue-page-jump` span
+   *  (#07 两个 affordance 的 fiddly 部分,选方案 (a) post-process DOM)。
+   *  - `[[笔记]]` → Obsidian 渲成 `a.internal-link`;紧随其后的 Text 节点若以 `(pN)` 开头(允许前置空白),
+   *    把 `(pN)` 段包成 span(data-href 取相邻链接、data-page 取页码),其余文本留在原 Text 节点。
+   *  - 不改 synthesizer 输出格式 → LLM prompt/质量不动(synthesizer.test.ts 不回归);脆性限于本 DOM 胶水(人工验)。 */
+  private decoratePageJumps(): void {
+    const links = Array.from(this.synthesisEl.querySelectorAll<HTMLAnchorElement>("a.internal-link"));
+    for (const a of links) {
+      const sib = a.nextSibling;
+      if (!sib || sib.nodeType !== Node.TEXT_NODE) continue;
+      const data = (sib as Text).data;
+      const m = /^(\s*)\(p(\d+)\)/.exec(data);
+      if (!m) continue;
+      const leading = m[1];
+      const matched = m[0].slice(leading.length);  // "(pN)"
+      const rest = data.slice(m[0].length);
+      const parent = a.parentElement;
+      if (!parent) continue;
+      const span = document.createElement("span");
+      span.className = "shiyue-page-jump";
+      span.dataset.href = a.dataset.href ?? "";
+      span.dataset.page = m[2];
+      span.textContent = matched;
+      const frag = document.createDocumentFragment();
+      if (leading) frag.appendChild(document.createTextNode(leading));
+      frag.appendChild(span);
+      if (rest) frag.appendChild(document.createTextNode(rest));
+      parent.replaceChild(frag, sib);
+    }
+  }
+
   /** 按上下文切换按钮区;切换即取消在飞汇总 + 清空渲染(防残留 + 防泄漏)。 */
   private renderContext(ctx: PanelContext): void {
     this.teardownSynthesis();
     this.actionsEl.empty();
+    this.synthSaveBtn = null;  // actionsEl 已清空,旧按钮 DOM 脱离;置空防悬空引用
     this.synthesisEl.empty();
     this.synthesisEl.toggleClass("is-active", false);
 
@@ -95,10 +148,16 @@ export class AiPanelView extends ItemView {
     selBtn.onclick = () => { void this.actions.extractSelection().catch(onErr("panel.err.selection")); };
   }
 
-  // ---- knowledge-point:汇总按钮 ----
+  // ---- knowledge-point:汇总按钮 + 存回笔记按钮(汇总有内容后显)----
   private renderSynthesisActions(file: TFile): void {
     const btn = this.actionsEl.createEl("button", { text: t("panel.btn.synthesis") });
     btn.onclick = () => { void this.runSynthesis(file); };
+    const saveBtn = this.actionsEl.createEl("button", { text: t("panel.btn.saveSynth"), cls: "shiyue-ai-synth-save" });
+    saveBtn.hidden = true;  // 汇总渲染出内容后才显(runSynthesis 结束时按 latestMd 决定)
+    saveBtn.onclick = () => {
+      if (this.synthFile && this.latestMd) void this.saveSynthesis(this.synthFile, this.latestMd);
+    };
+    this.synthSaveBtn = saveBtn;
   }
 
   private renderDisabled(): void {
@@ -110,6 +169,7 @@ export class AiPanelView extends ItemView {
   private async runSynthesis(file: TFile): Promise<void> {
     this.teardownSynthesis();
     this.synthSourcePath = file.path;   // 解析本笔记汇总输出里的 [[笔记]] 链接用
+    this.synthFile = file;              // 存回笔记的目标笔记
     const abort = new AbortController();
     this.synthAbort = abort;
     const loading = new LoadingNotice(this.app, t("panel.synth.loading"), () => abort.abort());
@@ -130,6 +190,22 @@ export class AiPanelView extends ItemView {
     } finally {
       loading.hide();
       this.synthAbort = null;
+      // 有内容(含失败保留的部分)→ 显「存回笔记」;空(全取消/未出帧)→ 藏
+      if (this.synthSaveBtn) this.synthSaveBtn.hidden = !this.latestMd;
+    }
+  }
+
+  /** 存回笔记:把当前综合摘要追加到知识点笔记的 `## 综合汇总` 章节(spec §6)。
+   *  成功/失败 Notice(i18n);存写中 disable 按钮防重复点。 */
+  private async saveSynthesis(file: TFile, md: string): Promise<void> {
+    if (this.synthSaveBtn) this.synthSaveBtn.disabled = true;
+    try {
+      await this.actions.saveSynthesisToNote(file, md);
+      new Notice(t("notice.synthSaved"), 4000);
+    } catch (e) {
+      new Notice(t("notice.synthSaveFail", { msg: e instanceof Error ? e.message : String(e) }), 8000);
+    } finally {
+      if (this.synthSaveBtn) this.synthSaveBtn.disabled = false;
     }
   }
 
@@ -152,6 +228,7 @@ export class AiPanelView extends ItemView {
           this.synthesisEl.empty();
           await MarkdownRenderer.render(this.app, m, this.synthesisEl, p, comp);
           comp.load();  // 激活 Component(注册的 DOM/event 回调在此挂载)
+          this.decoratePageJumps();  // [[笔记]](pN) 的 (pN) 包成可点 span(#07,方案 a post-process DOM)
           if (gen !== this.renderGen) break;     // 已被 teardown
           if (this.latestMd === m) break;         // 无更新的帧 → 结束
         }
@@ -177,6 +254,8 @@ export class AiPanelView extends ItemView {
     this.unloadSynthComp();
     this.synthActive = false;
     this.latestMd = "";
+    this.synthFile = null;
+    if (this.synthSaveBtn) this.synthSaveBtn.hidden = true;
   }
 
   async onClose(): Promise<void> {

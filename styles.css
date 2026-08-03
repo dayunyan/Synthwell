@@ -21,6 +21,21 @@
   padding: 0.5rem; border-top: 1px solid var(--background-modifier-border);
 }
 .shiyue-ai-synthesizing { color: var(--text-muted); font-style: italic; padding: 0.5rem 0; }
+
+/* 「存回笔记」按钮(#07):汇总有内容后显;次级样式(弱于主汇总按钮)。 */
+.shiyue-ai-synth-save { opacity: 0.85; }
+.shiyue-ai-synth-save:hover { opacity: 1; }
+
+/* 溯源页码跳转 affordance(#07):`[[笔记]](pN)` 的 (pN) 段,decoratePageJumps 包成独立可点 span。
+ * 与 [[笔记]] 链接并列、视觉区分(略弱 + accent 下划线提示可点),click 走 onSynthesisClick 捕获。 */
+.shiyue-ai-synthesis .shiyue-page-jump {
+  cursor: pointer;
+  color: var(--text-accent);
+  border-bottom: 1px dotted var(--interactive-accent);
+  margin-left: 0.1em;
+  user-select: none;
+}
+.shiyue-ai-synthesis .shiyue-page-jump:hover { color: var(--interactive-accent); }
 .shiyue-ai-chat-placeholder {
   flex: 1; display: flex; align-items: center; justify-content: center;
   color: var(--text-muted); font-style: italic;
