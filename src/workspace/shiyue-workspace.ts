@@ -25,8 +25,11 @@ export interface PanelActions {
   openInPreview(file: TFile): Promise<void>;
   /** 流式汇总:逐帧 onChunk(markdown, sparse);signal 取消静默结束;非 abort 错抛出。 */
   synthesize(file: TFile, onChunk: (markdown: string, sparse: boolean) => void, signal: AbortSignal): Promise<void>;
-  /** 把综合摘要追加到知识点笔记的 `## 综合汇总` 章节(spec §6 存回笔记)。 */
-  saveSynthesisToNote(file: TFile, synthesis: string): Promise<void>;
+  /** 把综合摘要存为综合笔记(ADR-0006:独立图谱节点 shiyue_type=synthesis,非追加章节)。
+   *  传触发知识点 + synthesis;controller 复用 synthesize 时缓存的源 KP 列表组 frontmatter + 原子写(存在覆盖 / 新建)。 */
+  saveSynthesisAsNote(trigger: TFile, synthesis: string): Promise<void>;
+  /** 综合笔记是否已存在(点「汇总关联笔记」时 lazy 查 → 确认覆盖用)。纯内存查(无 IO)。 */
+  synthesisNoteExists(trigger: TFile): boolean;
   /** 溯源页码跳转(#07):开该笔记的源 PDF(读其 frontmatter source_pdf)+ 导航原生 PDF viewer 到第 N 页。
    *  PDF 页码导航 API 运行时探测:有则跳页,无则开到第 1 页 + Notice(不强造,见 ADR-0005)。 */
   openSourcePage(noteFile: TFile, page: number): Promise<void>;
@@ -80,8 +83,11 @@ export class ShiyueWorkspace implements PanelActions {
   synthesize(file: TFile, onChunk: (markdown: string, sparse: boolean) => void, signal: AbortSignal): Promise<void> {
     return this.synthesisController.synthesize(file, onChunk, signal);
   }
-  saveSynthesisToNote(file: TFile, synthesis: string): Promise<void> {
-    return this.synthesisController.saveToNote(file, synthesis);
+  saveSynthesisAsNote(trigger: TFile, synthesis: string): Promise<void> {
+    return this.synthesisController.saveSynthesisAsNote(trigger, synthesis);
+  }
+  synthesisNoteExists(trigger: TFile): boolean {
+    return this.synthesisController.synthesisNoteExists(trigger);
   }
   async openSourcePage(noteFile: TFile, page: number): Promise<void> {
     const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;

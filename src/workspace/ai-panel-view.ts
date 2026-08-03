@@ -3,6 +3,7 @@ import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownRenderer, Component } f
 import type { PanelActions } from "./shiyue-workspace.ts";
 import type { PanelContext } from "./panel-context.ts";
 import { LoadingNotice } from "../ui/loading-notice.ts";
+import { confirmOverwriteSynthesis } from "../ui/confirm-modal.ts";
 import { t } from "../i18n/index.ts";
 
 export const SHIYUE_AI_PANEL_VIEW = "shiyue-ai-panel";
@@ -151,13 +152,24 @@ export class AiPanelView extends ItemView {
   // ---- knowledge-point:汇总按钮 + 存回笔记按钮(汇总有内容后显)----
   private renderSynthesisActions(file: TFile): void {
     const btn = this.actionsEl.createEl("button", { text: t("panel.btn.synthesis") });
-    btn.onclick = () => { void this.runSynthesis(file); };
+    btn.onclick = () => { void this.startSynthesis(file); };
     const saveBtn = this.actionsEl.createEl("button", { text: t("panel.btn.saveSynth"), cls: "shiyue-ai-synth-save" });
     saveBtn.hidden = true;  // 汇总渲染出内容后才显(runSynthesis 结束时按 latestMd 决定)
     saveBtn.onclick = () => {
       if (this.synthFile && this.latestMd) void this.saveSynthesis(this.synthFile, this.latestMd);
     };
     this.synthSaveBtn = saveBtn;
+  }
+
+  /** 启动汇总(含覆盖确认门,ADR-0006):点「汇总关联笔记」时 lazy 查综合笔记已存在 →
+   *  确认覆盖模态(已存在则「重新汇总将覆盖,继续?」)→ 继续跑 runSynthesis / 取消静默。
+   *  存在性检查在点击 handler 里(非每次 renderContext),避免上下文切换时无谓 IO(纯内存 getAbstractFileByPath)。 */
+  private async startSynthesis(file: TFile): Promise<void> {
+    if (this.actions.synthesisNoteExists(file)) {
+      const ok = await confirmOverwriteSynthesis(this.app);
+      if (!ok) return;  // 取消 → 不跑汇总(静默)
+    }
+    await this.runSynthesis(file);
   }
 
   private renderDisabled(): void {
@@ -195,12 +207,12 @@ export class AiPanelView extends ItemView {
     }
   }
 
-  /** 存回笔记:把当前综合摘要追加到知识点笔记的 `## 综合汇总` 章节(spec §6)。
+  /** 存为综合笔记(ADR-0006):把当前综合摘要存为 shiyue_type=synthesis 的图谱节点(存在则覆盖)。
    *  成功/失败 Notice(i18n);存写中 disable 按钮防重复点。 */
   private async saveSynthesis(file: TFile, md: string): Promise<void> {
     if (this.synthSaveBtn) this.synthSaveBtn.disabled = true;
     try {
-      await this.actions.saveSynthesisToNote(file, md);
+      await this.actions.saveSynthesisAsNote(file, md);
       new Notice(t("notice.synthSaved"), 4000);
     } catch (e) {
       new Notice(t("notice.synthSaveFail", { msg: e instanceof Error ? e.message : String(e) }), 8000);

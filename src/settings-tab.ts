@@ -39,6 +39,8 @@ export class ShiyueSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName(t("settings.baseURL.name")).addText(tc => tc.setValue(this.plugin.settings.baseURL).onChange(async v => { this.plugin.settings.baseURL = v.trim(); await this.plugin.saveSettings(); }));
 
+    new Setting(containerEl).setName(t("settings.synthesisPath.name")).setDesc(t("settings.synthesisPath.desc")).addText(tc => tc.setValue(this.plugin.settings.synthesisPath).onChange(async v => { this.plugin.settings.synthesisPath = v.trim(); await this.plugin.saveSettings(); }));
+
     new Setting(containerEl).setName(t("settings.test.name")).setDesc(t("settings.test.desc")).addButton(b => b.setButtonText(t("settings.test.button")).onClick(async () => {
       const p = buildProvider(this.app, this.plugin.settings);
       if (!p) { new Notice(t("notice.noApiKey")); return; }

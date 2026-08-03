@@ -8,6 +8,7 @@ test("DEFAULT_SETTINGS 默认 DeepSeek + deepseek-v4-flash + 中文笔记路径"
   assert.equal(DEFAULT_SETTINGS.baseURL, "https://api.deepseek.com");
   assert.equal(DEFAULT_SETTINGS.model, "deepseek-v4-flash");
   assert.equal(DEFAULT_SETTINGS.notesPath, "拾阅笔记/知识点");
+  assert.equal(DEFAULT_SETTINGS.synthesisPath, "拾阅笔记/汇总");
   assert.ok(Array.isArray(DEFAULT_SETTINGS.pricing));
 });
 
