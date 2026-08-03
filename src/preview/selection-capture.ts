@@ -64,9 +64,16 @@ export function attachSelectionCapture(leaf: WorkspaceLeaf, cache: SelectionCach
     if (!range) { hideBtn(); return; }
     const r = range.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) { hideBtn(); return; }   // 折叠选区
+    // 浮按钮定位到选区【结束】位置(鼠标 mouseup 处),非起点:取 collapse-to-end 的 caret rect
+    // (末字符后的插入点位置)→ computeFloatPosition 据此置上/下、左对齐到末点。
+    // 退化(零高,某些浏览器对纯文本节点 collapse rect 为空)→ 退到选区 bounding box(旧行为,起点对齐)。
+    const endRange = range.cloneRange();
+    endRange.collapse(false);   // 折到选区末尾
+    const caret = endRange.getBoundingClientRect();
+    const src = caret.height > 0 ? caret : r;
     const b = ensureBtn();
     const { left, top } = computeFloatPosition(
-      { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height },
+      { left: src.left, top: src.top, right: src.right, bottom: src.bottom, width: src.width, height: src.height },
       b.offsetWidth, b.offsetHeight, window.innerWidth, window.innerHeight);
     b.style.left = `${left}px`;
     b.style.top = `${top}px`;

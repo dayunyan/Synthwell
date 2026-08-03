@@ -68,9 +68,10 @@ export function extractionTerminal(r: ExtractionResult): ExtractionTerminal {
  *  面板执行 DOM,决策在此可单测(无 obsidian)。
  *  - setReplyMarkdown:已有 streaming reply 时,终态化它的文本(success/cancelled → result.message;
  *    fail → 保留末帧进行中文本,因 error 另追加)。undefined = 不改已有 reply。
- *  - appendTerminalReply:无 streaming reply 且终态为 reply 类(cancelled 于 confirmCost 门前 / 早期 success)
+ *  - appendTerminalReply:无 streaming reply 且终态为 reply 类**非取消**(早期返 success,不应发生,防御)
  *    → 补一条非 streaming 终态 reply。undefined = 不追加。
- *  - appendError:fail → 追加 error 消息。undefined = 不追加。可与 setReplyMarkdown 并存(有 reply + fail)。 */
+ *  - appendError:fail → 追加 error 消息。undefined = 不追加。可与 setReplyMarkdown 并存(有 reply + fail)。
+ *  特例:无 streaming reply + cancelled(confirmCost 门前撤回,user-action 亦未显)→ 全静默(无动作)。 */
 export interface ExtractionFinalizeActions {
   setReplyMarkdown?: string;
   appendTerminalReply?: string;
@@ -84,8 +85,9 @@ export function finalizeExtractionActions(hasStreamingReply: boolean, r: Extract
   if (hasStreamingReply) {
     // 已有 streaming reply:终态化它。reply 类 → 换成终态文案;fail → 保留末帧(进行中文本),error 另追加。
     actions.setReplyMarkdown = term.kind === "reply" ? term.markdown : selectionWorkingMarkdown();
-  } else if (term.kind === "reply") {
-    // 无 streaming reply(cancelled 于 confirmCost 门前 / 早期返 success)→ 补一条终态 reply
+  } else if (term.kind === "reply" && r.kind !== "cancelled") {
+    // 无 streaming reply + 非取消 reply(早期 success,防御)→ 补一条终态 reply。
+    // cancelled 于 confirmCost 门前(user 撤回,user-action 亦未显)→ 静默。
     actions.appendTerminalReply = term.markdown;
   }
   if (term.kind === "error") {

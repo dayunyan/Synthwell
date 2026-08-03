@@ -309,16 +309,19 @@ export class AiPanelView extends ItemView {
 
   // ---- 提取流式消息生命周期(#04:每个按钮 → user-action + streaming agent-reply)----
 
-  /** 整篇提取:user-action(「提炼全书要点」)+ confirmCost 门 → 确认后 streaming agent-reply(进度
+  /** 整篇提取:confirmCost 门 → 确认后 user-action(「提炼全书要点」)+ streaming agent-reply(进度
    *  「0/total」→ onProgress 更新「done/total,已抽 points 个」)→ 成功终态消息 / 取消(「已取消」)/ error。
-   *  停止按钮在气泡内(AbortController 贯穿 controller)。门控由 #03 buttonRowEl disabled 保证一次一条。 */
+   *  #调整:confirmCost 模态先于 user-action 显(门是预操作:点按钮先弹预估花费,确认后才显 user-action
+   *  气泡;撤回则无 user-action,静默)。停止按钮在气泡内(AbortController 贯穿 controller)。
+   *  门控由 #03 buttonRowEl disabled 保证一次一条。 */
   private runExtractBatch(): Promise<void> {
     return this.runExtract({
       label: t("panel.btn.batch"),
       errKey: "panel.err.batch",
-      buildHandlers: (replyId, abort) => ({
+      buildHandlers: (replyId, abort, appendUserAction) => ({
         signal: abort.signal,
-        onConfirmed: (total) => {   // confirmCost 通过后:append streaming reply「0/total」+ 显停止按钮
+        onConfirmed: (total) => {   // confirmCost 通过后:先显 user-action,再 append streaming reply「0/total」
+          appendUserAction();
           this.appendMessage({
             id: replyId, kind: "agent-reply",
             markdown: batchProgressMarkdown(0, total, 0), streaming: true, stop: () => abort.abort(),
@@ -334,31 +337,35 @@ export class AiPanelView extends ItemView {
   }
 
   /** 选区提取:user-action(「提炼选中要点」)+ streaming agent-reply(进行中「精读中…」)→ 成功终态
-   *  (「已提炼:<title>」)/ 取消(「已取消」)/ error。无 confirmCost 门(selection 无门)。 */
+   *  (「已提炼:<title>」)/ 取消(「已取消」)/ error。无 confirmCost 门 → user-action 点按钮即显。 */
   private runExtractSelection(): Promise<void> {
     return this.runExtract({
       label: t("panel.btn.selection"),
       errKey: "panel.err.selection",
-      buildHandlers: (replyId, abort) => ({
-        signal: abort.signal,
-        onBegin: () => {   // early check 通过 → append streaming reply「精读中…」
-          this.appendMessage({
-            id: replyId, kind: "agent-reply",
-            markdown: selectionWorkingMarkdown(), streaming: true, stop: () => abort.abort(),
-          });
-        },
-      }),
+      buildHandlers: (replyId, abort, appendUserAction) => {
+        appendUserAction();   // selection 无门:点按钮即显 user-action(与 batch 的门后显对称)
+        return {
+          signal: abort.signal,
+          onBegin: () => {   // early check 通过 → append streaming reply「精读中…」
+            this.appendMessage({
+              id: replyId, kind: "agent-reply",
+              markdown: selectionWorkingMarkdown(), streaming: true, stop: () => abort.abort(),
+            });
+          },
+        };
+      },
       run: (handlers) => this.actions.extractSelection(handlers),
     });
   }
 
   /** 提取消息生命周期骨架(batch/selection 共用):收尾在飞 → 新 AbortController + replyId →
-   *  user-action → handlers → run(catch 另 error 消息)→ finalizeExtractionReply 终态化。
-   *  buildHandlers 由两路径各自定 stream 何时 append / 怎更新;run 调对应 workspace 动作。 */
+   *  buildHandlers(决定 user-action 何时显)+ run(catch 另 error 消息)→ finalizeExtractionReply 终态化。
+   *  user-action 时序由 buildHandlers 经 appendUserAction 回调自定:selection 即显;batch 门后显。
+   *  run 调对应 workspace 动作。 */
   private async runExtract(opts: {
     label: string;
     errKey: "panel.err.batch" | "panel.err.selection";
-    buildHandlers: (replyId: string, abort: AbortController) => ExtractionHandlers;
+    buildHandlers: (replyId: string, abort: AbortController, appendUserAction: () => void) => ExtractionHandlers;
     run: (handlers: ExtractionHandlers) => Promise<ExtractionResult>;
   }): Promise<void> {
     this.finalizeStreamingExtraction();   // 兜底:不应有在飞,防御性收尾
@@ -366,8 +373,9 @@ export class AiPanelView extends ItemView {
     const replyId = newMessageId();
     this.extractAbort = abort;
     this.extractReplyId = replyId;
-    this.appendMessage({ id: newMessageId(), kind: "user-action", label: opts.label });
-    const handlers = opts.buildHandlers(replyId, abort);
+    const appendUserAction = (): void =>
+      this.appendMessage({ id: newMessageId(), kind: "user-action", label: opts.label });
+    const handlers = opts.buildHandlers(replyId, abort, appendUserAction);
     let r: ExtractionResult;
     try { r = await opts.run(handlers); }
     catch (e) {

@@ -72,12 +72,10 @@ test("finalizeExtractionActions:有 reply + fail → setReplyMarkdown=进行中�
   assert.equal(a.appendTerminalReply, undefined);
 });
 
-test("finalizeExtractionActions:无 reply + cancelled(confirmCost 门前取消)→ appendTerminalReply=取消", () => {
+test("finalizeExtractionActions:无 reply + cancelled(confirmCost 门前撤回)→ 全静默(无动作)", () => {
   const r: ExtractionResult = { cancelled: true, kind: "cancelled", message: "已取消" };
   const a = finalizeExtractionActions(false, r);
-  assert.equal(a.appendTerminalReply, "已取消");
-  assert.equal(a.setReplyMarkdown, undefined);
-  assert.equal(a.appendError, undefined);
+  assert.deepEqual(a, {});
 });
 
 test("finalizeExtractionActions:无 reply + fail(early fail)→ 仅 appendError", () => {
