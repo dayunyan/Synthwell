@@ -10,6 +10,13 @@ import {
   type ChatMessage,
   type AgentReplyMessage,
 } from "./chat-message.ts";
+import {
+  batchProgressMarkdown,
+  selectionWorkingMarkdown,
+  extractionTerminal,
+  type ExtractionHandlers,
+  type ExtractionResult,
+} from "./extraction-messages.ts";
 
 export const SHIYUE_AI_PANEL_VIEW = "shiyue-ai-panel";
 
@@ -59,6 +66,13 @@ export class AiPanelView extends ItemView {
   private synthReplyId: string | null = null;   // 当前 streaming 汇总回复的 message id
   /** 每条汇总回复 → 其触发知识点笔记(存回用)。按 replyId 绑定,防新汇总启动后旧回复存错文件。 */
   private saveTargets = new Map<string, TFile>();
+
+  // ---- 提取流式状态(单条 streaming agent-reply,#04)----
+  /** 在飞提取的 AbortController(气泡内停止按钮调 abort;controller 透传给 extractor)。
+   *  null = 无在飞提取。一次仅一条在飞(按钮排门控整排 disabled)。 */
+  private extractAbort: AbortController | null = null;
+  /** 当前在飞提取回复的 message id(终态化 / 上下文切换打断时用)。 */
+  private extractReplyId: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, actions: PanelActions) {
     super(leaf);
@@ -158,6 +172,7 @@ export class AiPanelView extends ItemView {
    *  synthesis(无按钮 + 信息提示「综合笔记 — 汇总自 N 个知识点」)/ none(禁用占位)。 */
   private renderContext(ctx: PanelContext): void {
     this.finalizeStreamingSynthesis();
+    this.finalizeStreamingExtraction();   // #04:切上下文 → 收尾在飞提取(abort + 终态化,保留已渲染)
     this.buttonRowEl.empty();
     this.currentButtons = [];
     this.selBtn = null;
@@ -169,14 +184,14 @@ export class AiPanelView extends ItemView {
     this.syncButtons();   // 初渲染按当前 hasSelection / extracting 定 disabled 态
   }
 
-  // ---- pdf:两抽取按钮(此 slice 仍走 Notice;slice 04 迁移到消息)----
+  // ---- pdf:两抽取按钮(点击 → runExtract* 消息生命周期:#04 user-action + streaming agent-reply)----
   private renderExtractionActions(): void {
     const batchBtn = this.buttonRowEl.createEl("button", { text: t("panel.btn.batch") });
     this.selBtn = this.buttonRowEl.createEl("button", { text: t("panel.btn.selection") });
     const onErr = (key: "panel.err.batch" | "panel.err.selection") => (e: unknown) =>
       new Notice(t(key, { msg: e instanceof Error ? e.message : String(e) }), 8000);
-    batchBtn.onclick = () => { void this.actions.extractBatch().catch(onErr("panel.err.batch")); };
-    this.selBtn.onclick = () => { void this.actions.extractSelection().catch(onErr("panel.err.selection")); };
+    batchBtn.onclick = () => { void this.runExtractBatch().catch(onErr("panel.err.batch")); };
+    this.selBtn.onclick = () => { void this.runExtractSelection().catch(onErr("panel.err.selection")); };
     this.currentButtons = [batchBtn, this.selBtn];
   }
 
@@ -292,6 +307,111 @@ export class AiPanelView extends ItemView {
     this.finalizeReply(this.synthReplyId, true);
   }
 
+  // ---- 提取流式消息生命周期(#04:每个按钮 → user-action + streaming agent-reply)----
+
+  /** 整篇提取:user-action(「提炼全书要点」)+ confirmCost 门 → 确认后 streaming agent-reply(进度
+   *  「0/total」→ onProgress 更新「done/total,已抽 points 个」)→ 成功终态消息 / 取消(「已取消」)/ error。
+   *  停止按钮在气泡内(AbortController 贯穿 controller)。门控由 #03 buttonRowEl disabled 保证一次一条。 */
+  private async runExtractBatch(): Promise<void> {
+    this.finalizeStreamingExtraction();   // 兜底:不应有在飞,防御性收尾
+    const abort = new AbortController();
+    const replyId = newMessageId();
+    this.extractAbort = abort;
+    this.extractReplyId = replyId;
+    this.appendMessage({ id: newMessageId(), kind: "user-action", label: t("panel.btn.batch") });
+    const handlers: ExtractionHandlers = {
+      signal: abort.signal,
+      onConfirmed: (total) => {   // confirmCost 通过后:append streaming reply「0/total」+ 显停止按钮
+        this.appendMessage({
+          id: replyId, kind: "agent-reply",
+          markdown: batchProgressMarkdown(0, total, 0), streaming: true, stop: () => abort.abort(),
+        });
+      },
+      onProgress: (done, total, points) => {   // 每块开始/结束 → 更新 reply 文本
+        const e = this.entries.get(replyId);
+        if (e instanceof AgentReplyEntry) e.setMarkdown(batchProgressMarkdown(done, total, points), "");
+      },
+    };
+    let r: ExtractionResult;
+    try { r = await this.actions.extractBatch(handlers); }
+    catch (e) {
+      this.extractAbort = null; this.extractReplyId = null;
+      this.appendMessage({
+        id: newMessageId(), kind: "error",
+        message: t("panel.err.batch", { msg: e instanceof Error ? e.message : String(e) }),
+      });
+      return;
+    }
+    this.finalizeExtractionReply(replyId, abort.signal.aborted, r);
+  }
+
+  /** 选区提取:user-action(「提炼选中要点」)+ streaming agent-reply(进行中「精读中…」)→ 成功终态
+   *  (「已提炼:<title>」)/ 取消(「已取消」)/ error。无 confirmCost 门(selection 无门)。 */
+  private async runExtractSelection(): Promise<void> {
+    this.finalizeStreamingExtraction();
+    const abort = new AbortController();
+    const replyId = newMessageId();
+    this.extractAbort = abort;
+    this.extractReplyId = replyId;
+    this.appendMessage({ id: newMessageId(), kind: "user-action", label: t("panel.btn.selection") });
+    const handlers: ExtractionHandlers = {
+      signal: abort.signal,
+      onBegin: () => {   // early check 通过 → append streaming reply「精读中…」
+        this.appendMessage({
+          id: replyId, kind: "agent-reply",
+          markdown: selectionWorkingMarkdown(), streaming: true, stop: () => abort.abort(),
+        });
+      },
+    };
+    let r: ExtractionResult;
+    try { r = await this.actions.extractSelection(handlers); }
+    catch (e) {
+      this.extractAbort = null; this.extractReplyId = null;
+      this.appendMessage({
+        id: newMessageId(), kind: "error",
+        message: t("panel.err.selection", { msg: e instanceof Error ? e.message : String(e) }),
+      });
+      return;
+    }
+    this.finalizeExtractionReply(replyId, abort.signal.aborted, r);
+  }
+
+  /** 终态化一条提取回复:success/cancelled → 终态化 reply(文本换 result.message);fail → 终态化 reply
+   *  (保留末帧,不显 save)+ 追加 error 消息。aborted(气泡内停止)→ cancelled 文本。提取无 save affordance。
+   *  未 append streaming reply 时(early fail / 取消于 confirmCost 门前)→ 仅按 result 追加消息。 */
+  private finalizeExtractionReply(replyId: string, aborted: boolean, r: ExtractionResult): void {
+    const term = extractionTerminal(r);
+    const entry = this.entries.get(replyId);
+    if (entry instanceof AgentReplyEntry) {
+      entry.setMarkdown(term.kind === "reply" ? term.markdown : selectionWorkingMarkdown(), "");
+      entry.update({ streaming: false, stop: undefined });   // 提取无 save affordance
+    } else if (term.kind === "reply") {
+      // 未 append streaming reply(cancelled 于 confirmCost 门前 / 早期返):补一条终态 reply
+      this.appendMessage({ id: replyId, kind: "agent-reply", markdown: term.markdown, streaming: false });
+    }
+    if (term.kind === "error") {
+      this.appendMessage({ id: newMessageId(), kind: "error", message: term.message });
+    }
+    if (this.extractReplyId === replyId) {
+      this.extractReplyId = null;
+      this.extractAbort = null;
+    }
+  }
+
+  /** 收尾在飞提取(上下文切换 / 新提取启动前 / 关面板):abort + 终态化其回复(保留末帧,显「已取消」)。 */
+  private finalizeStreamingExtraction(): void {
+    if (!this.extractAbort || !this.extractReplyId) return;
+    this.extractAbort.abort();
+    const replyId = this.extractReplyId;
+    const entry = this.entries.get(replyId);
+    if (entry instanceof AgentReplyEntry) {
+      entry.setMarkdown(t("extract.cancelled"), "");
+      entry.update({ streaming: false, stop: undefined });
+    }
+    this.extractAbort = null;
+    this.extractReplyId = null;
+  }
+
   /** 存为综合笔记(ADR-0006):点汇总回复的 save affordance → 追加 user-action(「存回笔记」)
    *  + agent-reply(「已存为综合笔记 [[汇总-XX]]」)消息对,调 slice 01 的 saveSynthesisAsNote。
    *  失败 → error 消息。先摘该回复的 save affordance 防重复点。触发文件按 replyId 取(绑定时记),
@@ -365,10 +485,13 @@ export class AiPanelView extends ItemView {
     this.saveTargets.clear();
     this.synthAbort = null;
     this.synthReplyId = null;
+    this.extractAbort = null;
+    this.extractReplyId = null;
   }
 
   async onClose(): Promise<void> {
     this.finalizeStreamingSynthesis();
+    this.finalizeStreamingExtraction();
     this.messagesEl.removeEventListener("scroll", this.onMessagesScroll);
     this.messagesEl.removeEventListener("click", this.onMessagesClick, true);
     this.detachContext?.();

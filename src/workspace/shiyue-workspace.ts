@@ -9,6 +9,7 @@ import { SynthesisController } from "./synthesis-controller.ts";
 import { stripWikilink } from "../core/extraction/note-parser.ts";
 import type { PanelContext } from "./panel-context.ts";
 import { synthesisSourceCount as synthesisSourceCountFm } from "./panel-context.ts";
+import type { ExtractionHandlers, ExtractionResult } from "./extraction-messages.ts";
 import { t } from "../i18n/index.ts";
 import type { ShiyueSettings } from "../settings.ts";
 
@@ -28,8 +29,10 @@ export interface PanelActions {
   /** 综合笔记源知识点数 N(#03 信息提示):读 synthesis 笔记 frontmatter synthesized_from 长度。
    *  非 synthesis / 缺失 → 0。纯读 metadataCache(无 IO)。 */
   synthesisSourceCount(file: TFile): number;
-  extractBatch(): Promise<void>;
-  extractSelection(): Promise<void>;
+  /** #04:面板路径提取 —— 传 handlers(controller 据回调转消息);命令面板路径不传(controller 退回 Notice)。
+   *  返 ExtractionResult:面板据 kind 决定终态消息(success/cancelled → 终态化 reply;fail → error)。 */
+  extractBatch(handlers?: ExtractionHandlers): Promise<ExtractionResult>;
+  extractSelection(handlers?: ExtractionHandlers): Promise<ExtractionResult>;
   /** 在上方预览区打开任意文件(PDF 或知识点笔记)。复用 openInShiyue:有文档→同 split 新 tab,空→替换。
    *  汇总输出里的 [[笔记]] 链接点击走此(Bug 3:原 native openLinkText 不开在预览区)。 */
   openInPreview(file: TFile): Promise<void>;
@@ -164,20 +167,27 @@ export class ShiyueWorkspace implements PanelActions {
     return v?.contentEl ?? v?.containerEl ?? null;
   }
 
-  async extractBatch(): Promise<void> {
+  async extractBatch(handlers?: ExtractionHandlers): Promise<ExtractionResult> {
     const file = this.previewCtx.getFile();
-    if (!file || file.extension !== "pdf") { new Notice(t("notice.noPdf")); return; }
-    await this.controller.extractBatch(file);
+    if (!file || file.extension !== "pdf") return this.failNotice(t("notice.noPdf"));
+    return this.controller.extractBatch(file, handlers);
   }
 
-  async extractSelection(): Promise<void> {
+  async extractSelection(handlers?: ExtractionHandlers): Promise<ExtractionResult> {
     const file = this.previewCtx.getFile();
-    if (!file || file.extension !== "pdf") { new Notice(t("notice.noPdf")); return; }
+    if (!file || file.extension !== "pdf") return this.failNotice(t("notice.noPdf"));
     const sel = this.cache.get();
-    if (!sel) { new Notice(t("notice.selectText"), 4000); return; }
+    if (!sel) return this.failNotice(t("notice.selectText"), 4000);
     this.setExtracting(true);   // 深抽进行中:藏浮按钮 + 面板整排 disabled(#03 复用同源信号)
-    try { await this.controller.extractSelection(file, sel); }
+    try { return await this.controller.extractSelection(file, sel, handlers); }
     finally { this.setExtracting(false); }
+  }
+
+  /** #04:workspace 层 early check 失败(无 PDF/无选区)→ Notice + fail result。面板路径无此 early check
+   *  (按钮门控保证有 PDF/选区);命令面板路径走此。集中构造 fail result,消重复字面量。 */
+  private failNotice(message: string, ms = 6000): ExtractionResult {
+    new Notice(message, ms);
+    return { cancelled: false, kind: "fail", message };
   }
 
   /** 深抽进行中开关(#03):同步浮按钮可见性(setExtracting on captureHandle)与面板整排 disabled
