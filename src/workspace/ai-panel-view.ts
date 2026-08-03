@@ -190,6 +190,8 @@ export class AiPanelView extends ItemView {
     this.synthAbort = abort;
     this.synthReplyId = replyId;
     this.saveTargets.set(replyId, file);
+    // 按钮点击先发 user-action(「汇总关联笔记」)——每个按钮 → user-action + agent-reply(spec §3)。
+    this.appendMessage({ id: newMessageId(), kind: "user-action", label: t("panel.btn.synthesis") });
     this.appendMessage({
       id: replyId,
       kind: "agent-reply",
@@ -216,17 +218,21 @@ export class AiPanelView extends ItemView {
         });
       }
     } finally {
-      this.finalizeReply(replyId);
+      this.finalizeReply(replyId, abort.signal.aborted);
     }
   }
 
-  /** 终态化一条 streaming 回复:streaming=false + 按 content 显 affordance:'save' + 清在飞状态。
-   *  abort / 正常结束 / 错误 / 上下文切换 / 关面板 共用。保留已渲染部分(空则不显 save)。 */
-  private finalizeReply(replyId: string): void {
+  /** 终态化一条 streaming 回复:streaming=false + 清在飞状态。aborted 时**不显 save affordance**
+   *  (用户主动停止/上下文切换打断 → 不应再存回;保留已渲染部分供阅读)。正常结束且有内容 → 显 save。 */
+  private finalizeReply(replyId: string, aborted: boolean): void {
     const e = this.entries.get(replyId);
     if (e instanceof AgentReplyEntry) {
       const hasContent = e.markdown.trim().length > 0;
-      e.update({ streaming: false, stop: undefined, affordance: hasContent ? "save" : undefined });
+      e.update({
+        streaming: false,
+        stop: undefined,
+        affordance: !aborted && hasContent ? "save" : undefined,
+      });
     }
     if (this.synthReplyId === replyId) {
       this.synthReplyId = null;
@@ -234,11 +240,11 @@ export class AiPanelView extends ItemView {
     }
   }
 
-  /** 收尾在飞汇总(上下文切换 / 新汇总启动前):abort + 终态化其回复(保留部分)。 */
+  /** 收尾在飞汇总(上下文切换 / 新汇总启动前):abort + 终态化其回复(保留部分,不显 save)。 */
   private finalizeStreamingSynthesis(): void {
     if (!this.synthAbort || !this.synthReplyId) return;
     this.synthAbort.abort();
-    this.finalizeReply(this.synthReplyId);
+    this.finalizeReply(this.synthReplyId, true);
   }
 
   /** 存为综合笔记(ADR-0006):点汇总回复的 save affordance → 追加 user-action(「存回笔记」)
