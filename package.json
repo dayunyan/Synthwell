@@ -1,0 +1,22 @@
+{
+  "name": "obsidian-shiyue",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+  },
+  "license": "AGPL-3.0",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "0.21.5",
+    "obsidian": "latest",
+    "pdf-lib": "^1.17.1",
+    "tslib": "2.6.2",
+    "typescript": "5.4.5"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^5.4.530"
+  }
+}
