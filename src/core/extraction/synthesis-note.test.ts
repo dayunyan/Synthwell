@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildSynthesisNoteContent, resolveSynthesisPath, type BuildSynthesisNoteInput } from "./synthesis-note.ts";
+import { buildSynthesisNoteContent, resolveSynthesisPath, synthesisLinkLabel, type BuildSynthesisNoteInput } from "./synthesis-note.ts";
 import type { KnowledgeNote } from "./synthesizer.ts";
 
 /** 造 KnowledgeNote(默认值与 synthesizer.test.ts 的 note() 同形)。 */
@@ -260,3 +260,26 @@ test("resolveSynthesisPath: 稳定文件名(同 basename 多次调同结果 → 
   const b = resolveSynthesisPath("飞轮", "拾阅笔记/汇总");
   assert.equal(a, b, "文件名稳定(覆盖语义靠此)");
 });
+
+// ── synthesisLinkLabel ──────────────────────────────────────────────────────
+
+test("synthesisLinkLabel: `汇总 - <basename>`(消息双链标签,与 i18n 无关)", () => {
+  assert.equal(synthesisLinkLabel("飞轮"), "汇总 - 飞轮");
+});
+
+test("synthesisLinkLabel: basename 含空格/特殊字符 → 原样(同 resolveSynthesisPath 不 sanitize 约定)", () => {
+  assert.equal(synthesisLinkLabel("飞轮效应 SaaS"), "汇总 - 飞轮效应 SaaS");
+});
+
+test("synthesisLinkLabel 与 resolveSynthesisPath 同 basename 产一致 stem(防漂移回归)",
+  () => {
+    // 链接标签须与实际存盘文件名一致:消息双链 [[汇总 - 飞轮]] 应点开 汇总 - 飞轮.md。
+    // 改前缀只改 SYNTH_NAME_PREFIX 一处(Shotgun Surgery 消);此测守两条 stem 不漂移。
+    const basename = "飞轮效应 SaaS";
+    const label = synthesisLinkLabel(basename);
+    const path = resolveSynthesisPath(basename, "拾阅笔记/汇总");
+    assert.ok(
+      path === `拾阅笔记/汇总/${label}.md`,
+      `文件名 stem 须与链接标签一致:got path=${path}, label=${label}`,
+    );
+  });

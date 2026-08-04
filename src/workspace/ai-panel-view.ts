@@ -3,6 +3,7 @@ import { ItemView, WorkspaceLeaf, TFile, Notice } from "obsidian";
 import type { PanelActions } from "./shiyue-workspace.ts";
 import type { PanelContext } from "./panel-context.ts";
 import { confirmOverwriteSynthesis } from "../ui/confirm-modal.ts";
+import { synthesisLinkLabel } from "../core/extraction/synthesis-note.ts";
 import { t } from "../i18n/index.ts";
 import {
   newMessageId,
@@ -482,7 +483,7 @@ export class AiPanelView extends ItemView {
     if (!file) return;  // 防御:无触发文件 → 不写(仅留 user-action)
     try {
       await this.actions.saveSynthesisAsNote(file, md);
-      const link = `汇总 - ${file.basename}`;
+      const link = synthesisLinkLabel(file.basename);
       this.appendMessage({
         id: newMessageId(),
         kind: "agent-reply",

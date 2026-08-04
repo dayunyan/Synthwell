@@ -22,9 +22,13 @@ export interface BuildSynthesisNoteInput {
   synthesizedAt: string;
 }
 
-/** 综合笔记正文 H1 前缀(固定中文,不随 i18n——存入笔记的持久数据,跨 locale 同形,
- *  与 renderNote 的 `## 原文`/`## 关联` 同模式)。 */
-const SYNTH_H1_PREFIX = "# 汇总 - ";
+/** 综合笔记名前缀(固定中文 `汇总 - `,不随 i18n——存入笔记/消息双链的持久数据,跨 locale 同形)。
+ *  resolveSynthesisPath(存盘文件名)与 synthesisLinkLabel(消息双链标签)共享此约定:
+ *  改前缀只改一处,文件名与「已存为综合笔记 [[...]]」消息双链不漂移(消 Shotgun Surgery)。 */
+const SYNTH_NAME_PREFIX = "汇总 - ";
+
+/** 综合笔记正文 H1 前缀(`# ` + SYNTH_NAME_PREFIX,与 renderNote 的 `## 原文`/`## 关联` 同模式)。 */
+const SYNTH_H1_PREFIX = `# ${SYNTH_NAME_PREFIX}`;
 
 /** 组综合笔记完整内容(frontmatter + body)。
  *  - frontmatter:shiyue_type=synthesis / synthesized_from([[KP]] 双链列表,图谱边) /
@@ -56,12 +60,19 @@ export function buildSynthesisNoteContent(input: BuildSynthesisNoteInput): strin
   return lines.join("\n");
 }
 
-/** 解析综合笔记路径:<synthesisPath>/汇总 - <triggerBasename>.md。
+/** 解析综合笔记路径:<synthesisPath>/<SYNTH_NAME_PREFIX><triggerBasename>.md。
  *  文件名稳定(同 basename → 同路径)→ 重汇总覆盖同文件(bump frontmatter,文件名不变)。
  *  basename 来自 TFile(文件系统已合法),不再 sanitize;仅归一路径斜杠(去尾斜杠、合多斜杠)。 */
 export function resolveSynthesisPath(triggerBasename: string, synthesisPath: string): string {
   const dir = synthesisPath.split("/").map(s => s.trim()).filter(Boolean).join("/");
-  return `${dir}/汇总 - ${triggerBasename}.md`;
+  return `${dir}/${SYNTH_NAME_PREFIX}${triggerBasename}.md`;
+}
+
+/** 综合笔记消息双链标签:`<SYNTH_NAME_PREFIX><triggerBasename>`(与 resolveSynthesisPath 文件名同 stem)。
+ *  saveSynthesis 用此构造「已存为综合笔记 [[...]]」消息的 link,使消息双链与实际存盘文件名一致
+ *  (可点开综合笔记)。文件名格式变更只改 SYNTH_NAME_PREFIX 一处,不触视图(消 spec/视图 Shotgun Surgery)。 */
+export function synthesisLinkLabel(triggerBasename: string): string {
+  return `${SYNTH_NAME_PREFIX}${triggerBasename}`;
 }
 
 /** YAML 双引号标量转义:先转义反斜杠(否则末尾 \ 会吞闭合引号 → frontmatter 解析失败),
