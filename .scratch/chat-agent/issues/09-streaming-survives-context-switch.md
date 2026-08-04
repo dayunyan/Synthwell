@@ -4,7 +4,7 @@
 
 **Blocked by:** 07(`StreamingReplyState` 打包——本 ticket 改的就是 finalize 的 abort 时机,先打包让改更净)
 
-**Status:** ready-for-human(手验项待验)
+**Status:** done — 手验通过(2026-08-04,用户确认)。commit `cfcde55`(w0-spike).
 
 - [x] `renderContext` 不再调 `finalizeStreaming*` 的 abort 分支(上下文切换不收尾在飞回复)。→ 删 `renderContext` 首行 `this.finalizeStreaming()`;在飞 slot 持续到 `run*` 终态(`endStreaming`)或 `onClose`。
 - [x] abort 收尾移到 `onClose`(面板销毁——reply 的 Component 必须清,防泄漏 D6)。→ `onClose` 仍调 `finalizeStreaming()`(abort + onAbort + 清 slot)+ `unloadAllEntries()`(清 Component);issue 明定「abort 收尾移到 onClose」即此。
@@ -14,7 +14,7 @@
 - [x] 边界:面板关闭 → 仍 abort + 清 Component(防泄漏);第二条 streaming 无法启动(整排 disabled 拦)。→ `onClose` finalizeStreaming abort + unloadAllEntries 清 Component;第二条 streaming:streaming 时整排 disabled(button-gating),按钮点击不触发 `run*`;`run*` 启动前 `finalizeStreaming` 兜底收尾旧在飞。
 - [x] 输入框:已永久禁用,不加 cosmetic busy 态(已灰,二次灰噪声)——明确不做事。→ `inputEl` `onOpen` 设 `disabled=""`,#09 未加 streaming-driven 类。
 - [x] 现有测试绿(200,新增 streaming-survives-switch 测);tsc + esbuild clean。→ 实测 215 绿(211 base + 4 button-gating);tsc + esbuild(`npm run build`)clean。
-- [ ] 手验:开 KP → 点汇总(流式中)→ 切到 PDF 上下文 → 按钮排显 PDF 按钮但全灰,汇总回复继续增长到完成 → 显 save affordance(原 KP 文件)→ 整排恢复;关面板 → 在飞回复清(不泄漏)。
+- [x] 手验:开 KP → 点汇总(流式中)→ 切到 PDF 上下文 → 按钮排显 PDF 按钮但全灰,汇总回复继续增长到完成 → 显 save affordance(原 KP 文件)→ 整排恢复;关面板 → 在飞回复清(不泄漏)。→ 2026-08-04 用户确认通过。
 
 ---
 
