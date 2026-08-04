@@ -27,10 +27,12 @@
 - **`agent-reply`** `{ id, markdown, streaming: boolean, stop?: () => void, affordance?: 'save' }` — tool 输出。streaming 期显停止按钮 + markdown 增长;streaming=false 停止按钮消失,汇总则 `affordance:'save'` 出现。左对齐。
 - **`error`** `{ id, message }` — tool 失败(替换面板路径 Notice)。红底样式,无 streaming/save。
 
+**按钮 → 消息时机**:预操作门(confirmCost 门 / 汇总覆盖确认门)**先于** `user-action`——点「提炼全书要点」先弹预估模态、点「汇总关联笔记」遇已存综合笔记先弹覆盖确认模态,**消息流无任何气泡**;只在门通过后才弹 `user-action` + streaming `agent-reply`;撤回/取消则无 `user-action`(静默)。selection(「提炼选中要点」/浮动「精读选中」)无门 → 点按钮即显 `user-action`。
+
 **关键行为**:
 
 1. 流式汇总 = 单条 `agent-reply` 增长(markdown 随 chunk 累积,streaming true→false),非「进度→回复」两段。
-2. **提取迁移到消息**:`LoadingNotice`(spinner+stop)→ streaming `agent-reply`(状态文本增长「0/12 块」→「已抽 N 个知识点,入库」);成功/失败 Notice → 该 reply 终态 / `error` 消息。`confirmCost` 模态保留(预操作门,非消息);user-action + agent-reply 在确认后才出现。
+2. **提取迁移到消息**:`LoadingNotice`(spinner+stop)→ streaming `agent-reply`(状态文本增长「0/12 块」→「已抽 N 个知识点,入库」);成功/失败 Notice → 该 reply 终态 / `error` 消息。`confirmCost` 模态保留(预操作门,见上「按钮 → 消息时机」)。
 3. **消息持久(不随上下文切换清)**:messagesEl 不被 renderContext 清(反馈 #2)。切上下文只改按钮排(context-aware),消息日志累积(会话内,内存)。
 4. **保存按钮跟随汇总回复**:点 → 在汇总 `agent-reply` 气泡后渲染 `user-action`(「存回笔记」)+ `agent-reply`(「已存为综合笔记 [[汇总-XX]]」)。反馈 #1(保存时机)自然解决。
 5. **停止按钮在 streaming reply 内**(替换 LoadingNotice 的 stop)。
@@ -102,7 +104,8 @@
 | 成功 Notice(`extract.success`/`extract.generated`/`notice.synthSaved`) | `agent-reply` 终态(「已抽 N 个知识点」/「已存为综合笔记 [[X]]」) |
 | `confirmCost` 模态 | 保留(预操作门) |
 | 非面板触发(命令面板抽提取) | 保留 Notice(迁移仅 AI 面板路径) |
-| `notice.noPdf`/`notice.selectText`/`notice.sourcePdfNotFound`/`notice.pageJumpUnavailable` | 视调用源:面板内 → `error`/按钮态;命令面板 → Notice |
+| `notice.noPdf`/`notice.selectText`/`notice.sourcePdfNotFound` | 视调用源:面板内 → `error`/按钮态;命令面板 → Notice |
+| `panel.err.linkNotFound`/`notice.pageJumpUnavailable` | 留 `Notice`(消息内 `[[笔记]]`/`(pN)` 点击不生成 `user-action` → `error` 气泡不合适) |
 
 ## 8. 改动文件清单(预判,`/to-tickets` 细化)
 
@@ -139,7 +142,7 @@
 
 ### §7 修订:link/page-jump 错误留 Notice(撤销该行迁移)
 
-§7 迁移表原「`notice.linkNotFound`/`notice.pageJumpUnavailable` → `error`/按钮态」**撤销**。这类点击不生成 user-action → 错误消息对不合适,**留 `Notice`**。代码已 Notice,无改。其余 §7 行不变。
+§7 迁移表原「`panel.err.linkNotFound`/`notice.pageJumpUnavailable` → `error`/按钮态」**撤销**。这类点击不生成 user-action → 错误消息对不合适,**留 `Notice`**。代码已 Notice,无改。其余 §7 行不变。
 
 ### 新增 §10:流式跨上下文切换生命周期 + refactor 批次
 

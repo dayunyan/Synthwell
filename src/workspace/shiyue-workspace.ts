@@ -116,6 +116,9 @@ export class ShiyueWorkspace implements PanelActions {
   saveSynthesisAsNote(trigger: TFile, synthesis: string): Promise<void> {
     return this.synthesisController.saveSynthesisAsNote(trigger, synthesis);
   }
+  // 保留为 PanelActions seam 一致性,非透传冗余:PanelActions 是面板侧唯一依赖的接口
+  // (ai-panel-view 经 this.actions.* 调用),所有 synthesis 操作集中经此口子;直调 controller
+  // 会破接口对称(extractSelection/synthesize/saveSynthesisAsNote 都同模式透传)。
   synthesisNoteExists(trigger: TFile): boolean {
     return this.synthesisController.synthesisNoteExists(trigger);
   }
