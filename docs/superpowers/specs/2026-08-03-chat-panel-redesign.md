@@ -122,3 +122,35 @@
 2. **NL 输入解析(聊天 Agent)**:输入框 v1 禁用;聊天 Agent 单独立项,接管输入框 + LLM 选 tool 替换按钮选 tool(`dispatchTool` seam 已留)。
 3. **跨会话消息持久化**:v1 消息内存;后续视用不用再定。
 4. **meta-synthesis / 综合笔记的再操作**:synthesis kind = 无操作;若将来要「围绕一个综合笔记再汇总」,另立决策(综合笔记能否成汇总输入)。
+
+---
+
+## Round 2 修订(2026-08-04,code-review + grill 出)
+
+> 源:4 工单实现 + 人工验 + `/code-review`(fixed `7e9b9c4`)。Standards 轴 9 smells 全认可;Spec 轴 4 项用户澄清。本节修订 §3/§4/§7;新增 §10(refactor 批次)。
+
+### §3 修订:user-action 时机(confirmCost 门先于气泡)
+
+§3 原「每个按钮 → user-action + agent-reply」过时。**澄清**:confirmCost 门是**预操作门**——点「提炼全书要点」先弹预估花费模态,**消息流无任何气泡**;只有点「确认」后才弹 user-action + streaming agent-reply;撤回模态则无 user-action(静默)。selection 无门 → 点按钮即显 user-action。代码已实现(`onConfirmed` 调 `appendUserAction`);本修订只校正 spec 措辞。
+
+### §4 修订:浮动按钮走消息协议(原「PDF-only 挂」扩展)
+
+§4 原「浮动『精读选中』按钮 PDF-only 挂」仅定挂载范围。**新增**:浮动点击须在 AI 区生成 `user-action`(label 同「提炼选中要点」——同一操作两个触发入口),后续路径同「提炼选中要点」按钮(即 `runExtractSelection` 消息流)。路由用**控制反转**:`PanelActions.setDeepExtractHandler(fn | null)`——面板 onOpen 注册 `() => runExtractSelection()`、onClose 注销;`syncSelectionCapture` 用注册的 handler 作 `onDeepExtract`(无 handler 则退命令路径 Notice,防御性;面板与浮动同生共死,handler 恒在)。`selection-capture.ts` 不变(仍调无参 `onDeepExtract`)。
+
+### §7 修订:link/page-jump 错误留 Notice(撤销该行迁移)
+
+§7 迁移表原「`notice.linkNotFound`/`notice.pageJumpUnavailable` → `error`/按钮态」**撤销**。这类点击不生成 user-action → 错误消息对不合适,**留 `Notice`**。代码已 Notice,无改。其余 §7 行不变。
+
+### 新增 §10:流式跨上下文切换生命周期 + refactor 批次
+
+**§10.1 流式不随上下文切换中断**(Spec #4 + Standards #2):在飞 agent-reply(汇总 / 提取)跨上下文切换**继续完成**,不 abort + 「已取消」。`renderContext` 不再调 `finalizeStreaming*` 的 abort 分支;abort 仅在 `onClose`(面板销毁)发生。上下文切换时:
+- `buttonRowEl` 仍按新上下文重渲(context-gating 不变),但 **streaming flag 覆盖 → 整排 disabled**(`syncButtons` 已有 `extracting` 机制,streaming 复用同信号,跨切换持续而非随 abort 清)。
+- 在飞回复按 replyId 绑定其原触发文件(`saveTargets` 已对),完成后 save affordance 落该回复(原文件)。
+- 输入框已永久禁用(v1 stub),不再加 cosmetic busy 态(已灰,二次灰是噪声)。
+
+**§10.2 refactor 批次**(Standards 9 smells,见 `.scratch/chat-agent/issues/05-11`):
+- 打包 `StreamingReplyState`(去重 `finalizeStreamingSynthesis`/`finalizeStreamingExtraction` + clump `synthAbort`/`synthReplyId`、`extractAbort`/`extractReplyId`)——与 §10.1 同代码段,先打包(prefactor)后改行为(§10.1)。
+- 提 `resolveRunCtx`(`extractBatch`/`extractSelection` 重复三元组)、`settle`→`returnResultWithNotice`、`ExtractionFinalizeActions`→`ExtractionTerminal`(Primitive Obsession + Speculative Generality)。
+- 拆 `agent-reply-entry.ts`(`AgentReplyEntry`/`MessageEntry`/`StaticEntry` 移出 `ai-panel-view.ts`,对齐 `chat-message.ts`/`extraction-messages.ts` 拆分)。
+- `saveSynthesis` 链接标签 `汇总 - ${file.basename}` 提到 seam 作 `synthesisLinkLabel(trigger)`(Feature Envy + Shotgun Surgery,与 `resolveSynthesisPath` 同居)。
+- `synthesisNoteExists` middle-man:接受为 PanelActions seam 代价(保留)或直调 controller——grill 定保留(seam 一致性 > 一行透传)。
