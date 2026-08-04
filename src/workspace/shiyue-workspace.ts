@@ -46,6 +46,12 @@ export interface PanelActions {
   /** 溯源页码跳转(#07):开该笔记的源 PDF(读其 frontmatter source_pdf)+ 导航原生 PDF viewer 到第 N 页。
    *  PDF 页码导航 API 运行时探测:有则跳页,无则开到第 1 页 + Notice(不强造,见 ADR-0005)。 */
   openSourcePage(noteFile: TFile, page: number): Promise<void>;
+  /** #10 浮动「精读选中」走消息协议(控制反转):面板 onOpen 注册 `() => runExtractSelection()`(走面板消息流:
+   *  user-action + streaming agent-reply + 终态/error),onClose 注销(null)。`syncSelectionCapture` 用注册的
+   *  handler 作浮按钮 `onDeepExtract`;无 handler 退命令路径 `extractSelection()`(Notice,防御性——面板与浮动
+   *  同生共死,handler 恒在,但 onClose 在浮动仍挂时清,退 Notice 路径胜于崩)。**调用时读** slot(非闭包捕获):
+   *  注册/注销后无需重挂浮按钮,且重开面板换新 handler 不会落到旧 panel 实例。 */
+  setDeepExtractHandler(fn: (() => void) | null): void;
 }
 
 export const SHIYUE_LOGO_ATTR = "data-shiyue-logo";
@@ -79,6 +85,10 @@ export class ShiyueWorkspace implements PanelActions {
   /** 深抽进行中(#03):复用浮按钮 setExtracting 同源信号,亦驱动面板整排 disabled。 */
   private extracting = false;
   private extractingListeners = new Set<(b: boolean) => void>();
+  /** #10 浮动「精读选中」消息流 handler slot:面板 onOpen 注册 `() => runExtractSelection()`、onClose 注销(null)。
+   *  `syncSelectionCapture` 的 `onDeepExtract` **调用时读**此 slot(无 handler 退命令路径 extractSelection,防御性)。
+   *  调用时读 → 注册/注销后无需重挂浮按钮;重开面板换新 handler 不落旧 panel 实例。 */
+  private deepExtractHandler: (() => void) | null = null;
 
   constructor(app: App, plugin: Plugin, settings: () => ShiyueSettings, aiViewType: string) {
     this.app = app; this.plugin = plugin; this.settings = settings; this.aiViewType = aiViewType;
@@ -104,6 +114,9 @@ export class ShiyueWorkspace implements PanelActions {
     this.extractingListeners.add(fn);
     fn(this.extracting);
     return () => { this.extractingListeners.delete(fn); };
+  }
+  setDeepExtractHandler(fn: (() => void) | null): void {
+    this.deepExtractHandler = fn;
   }
   synthesisSourceCount(file: TFile): number {
     const fm = this.app.metadataCache.getFileCache(file)?.frontmatter ?? null;
@@ -243,7 +256,14 @@ export class ShiyueWorkspace implements PanelActions {
     this.cache.clear();   // 新 PDF(或切 tab):旧选区不属于此预览,清掉让按钮 disabled
     if (!leaf) return;
     this.captureHandle = attachSelectionCapture(leaf, this.cache, {
-      onDeepExtract: () => { void this.extractSelection(); },
+      // #10 调用时读 deepExtractHandler:面板注册 → 走消息流(user-action + streaming agent-reply);
+      // 无 handler(onClose 后浮动仍挂)→ 退命令路径 extractSelection()(Notice,防御性)。
+      // 调用时读而非闭包捕获:注册/注销后无需重挂浮按钮;重开面板换新 handler 不落旧 panel 实例。
+      onDeepExtract: () => {
+        const h = this.deepExtractHandler;
+        if (h) h();
+        else void this.extractSelection();
+      },
     });
   }
 

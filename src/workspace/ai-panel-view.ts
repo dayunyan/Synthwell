@@ -121,6 +121,10 @@ export class AiPanelView extends ItemView {
     // #03:选区有无 → 「提炼选中要点」按钮 disabled 态;深抽进行中 → 整排 disabled。
     this.detachSelection = this.actions.onSelectionChange((has) => this.onSelectionChange(has));
     this.detachExtracting = this.actions.onExtractingChange((b) => this.onExtractingChange(b));
+    // #10 浮动「精读选中」走消息协议(控制反转):注册 handler → 浮按钮点击走 runExtractSelection
+    //  (user-action「提炼选中要点」+ streaming agent-reply + 终态/error,与点按钮排「提炼选中要点」一致)。
+    //  onClose 注销(null)防落到旧 panel 实例。无 handler 时 workspace 退命令路径 Notice(防御性)。
+    this.actions.setDeepExtractHandler(() => { void this.runExtractSelection(); });
   }
 
   /** 滚动事件:据距底距离更新粘底状态。 */
@@ -539,6 +543,7 @@ export class AiPanelView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.actions.setDeepExtractHandler(null);   // #10 注销浮动 handler,防落到旧 panel 实例(浮动仍挂时退 Notice)
     this.finalizeStreaming();
     this.messagesEl.removeEventListener("scroll", this.onMessagesScroll);
     this.messagesEl.removeEventListener("click", this.onMessagesClick, true);
