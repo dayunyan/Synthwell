@@ -53,45 +53,43 @@ export function selectionSuccessMarkdown(title: string): string {
   return t("extract.msg.selectionDone", { title });
 }
 
-/** 面板终态动作:success/cancelled → 终态化 reply(markdown=result.message);fail → error 消息。 */
-export type ExtractionTerminal =
+/** ExtractionResult → 终态回复/错误二分(success/cancelled → reply;fail → error)。
+ *  仅 `finalizeExtractionActions` 内部用(去导出:Speculative Generality)。 */
+type ExtractionTerminal =
   | { kind: "reply"; markdown: string }
   | { kind: "error"; message: string };
 
-/** 据 ExtractionResult 决定面板终态动作。success/cancelled → reply;fail → error。 */
-export function extractionTerminal(r: ExtractionResult): ExtractionTerminal {
+/** 据 ExtractionResult 决定终态二分。success/cancelled → reply;fail → error。 */
+function extractionTerminal(r: ExtractionResult): ExtractionTerminal {
   if (r.kind === "fail") return { kind: "error", message: r.message };
   return { kind: "reply", markdown: r.message };
 }
 
-/** 面板终态化决策(纯,无 DOM):据「是否已有 streaming reply」+ ExtractionResult 决定三类动作。
+/** 面板终态化动作(判别联合:合法组合编码进类型,替代三可选 string + docstring 不变式,Primitive Obsession)。
  *  面板执行 DOM,决策在此可单测(无 obsidian)。
- *  - setReplyMarkdown:已有 streaming reply 时,终态化它的文本(success/cancelled → result.message;
- *    fail → 保留末帧进行中文本,因 error 另追加)。undefined = 不改已有 reply。
- *  - appendTerminalReply:无 streaming reply 且终态为 reply 类**非取消**(早期返 success,不应发生,防御)
- *    → 补一条非 streaming 终态 reply。undefined = 不追加。
- *  - appendError:fail → 追加 error 消息。undefined = 不追加。可与 setReplyMarkdown 并存(有 reply + fail)。
- *  特例:无 streaming reply + cancelled(confirmCost 门前撤回,user-action 亦未显)→ 全静默(无动作)。 */
-export interface ExtractionFinalizeActions {
-  setReplyMarkdown?: string;
-  appendTerminalReply?: string;
-  appendError?: string;
-}
+ *  - finalize-reply:已有 streaming reply + reply 类终态(success/cancelled)→ 终态化它(换 markdown,摘 stop)。
+ *  - finalize-reply-and-error:已有 streaming reply + fail → 终态化它(保留末帧进行中文本)+ 追加 error 消息。
+ *  - append-error:无 streaming reply + fail(early check 失败,onConfirmed/onBegin 未触)→ 追加 error 消息。
+ *  - silent:无 streaming reply + cancelled(confirmCost 门前撤回,user-action 亦未显)→ 无动作。
+ *  原「无 streaming reply + success」防御 appendTerminalReply 路径不可达(success 必在 onConfirmed/onBegin
+ *  后,故必有 streaming reply)→ 消去为 silent。 */
+export type ExtractionFinalizeActions =
+  | { kind: "finalize-reply"; markdown: string }
+  | { kind: "finalize-reply-and-error"; markdown: string; error: string }
+  | { kind: "append-error"; error: string }
+  | { kind: "silent" };
 
-/** 据 hasStreamingReply + ExtractionResult 算终态动作集合。纯函数,面板据此执行 DOM。 */
+/** 据 hasStreamingReply + ExtractionResult 算终态动作。纯函数,面板据此执行 DOM。 */
 export function finalizeExtractionActions(hasStreamingReply: boolean, r: ExtractionResult): ExtractionFinalizeActions {
   const term = extractionTerminal(r);
-  const actions: ExtractionFinalizeActions = {};
   if (hasStreamingReply) {
     // 已有 streaming reply:终态化它。reply 类 → 换成终态文案;fail → 保留末帧(进行中文本),error 另追加。
-    actions.setReplyMarkdown = term.kind === "reply" ? term.markdown : selectionWorkingMarkdown();
-  } else if (term.kind === "reply" && r.kind !== "cancelled") {
-    // 无 streaming reply + 非取消 reply(早期 success,防御)→ 补一条终态 reply。
-    // cancelled 于 confirmCost 门前(user 撤回,user-action 亦未显)→ 静默。
-    actions.appendTerminalReply = term.markdown;
+    if (term.kind === "error") return { kind: "finalize-reply-and-error", markdown: selectionWorkingMarkdown(), error: term.message };
+    return { kind: "finalize-reply", markdown: term.markdown };
   }
-  if (term.kind === "error") {
-    actions.appendError = term.message;
-  }
-  return actions;
+  // 无 streaming reply:early check 失败(无 onConfirmed/onBegin)或 confirmCost 门前撤回。
+  if (term.kind === "error") return { kind: "append-error", error: term.message };
+  // cancelled 于 confirmCost 门前(user 撤回,user-action 亦未显)→ 静默;
+  // success 无 streaming reply 不可达(原防御 appendTerminalReply 路径消去)→ 静默。
+  return { kind: "silent" };
 }

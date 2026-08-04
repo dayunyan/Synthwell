@@ -408,21 +408,34 @@ export class AiPanelView extends ItemView {
     if (this.streaming?.replyId === replyId) this.streaming = null;
   }
 
-  /** 终态化一条提取回复的**条目**:据「是否已有 streaming reply」+ result 算三类动作(纯决策
+  /** 终态化一条提取回复的**条目**:据「是否已有 streaming reply」+ result 算终态动作(判别联合
    *  finalizeExtractionActions),面板执行 DOM。纯 entry 更新,不清 streaming slot(由 runExtract 终态清,
    *  防旧回调误清新在飞)。提取无 save affordance(终态化后 stop 摘除,不显 save)。 */
   private finalizeExtractionReply(replyId: string, r: ExtractionResult): void {
     const entry = this.entries.get(replyId);
     const actions = finalizeExtractionActions(entry instanceof AgentReplyEntry, r);
-    if (actions.setReplyMarkdown !== undefined && entry instanceof AgentReplyEntry) {
-      entry.setMarkdown(actions.setReplyMarkdown, "");
+    switch (actions.kind) {
+      case "finalize-reply":
+        this.finalizeExistingReply(entry, actions.markdown);
+        break;
+      case "finalize-reply-and-error":
+        this.finalizeExistingReply(entry, actions.markdown);   // fail 保留末帧进行中文本
+        this.appendMessage({ id: newMessageId(), kind: "error", message: actions.error });
+        break;
+      case "append-error":
+        this.appendMessage({ id: newMessageId(), kind: "error", message: actions.error });
+        break;
+      case "silent":
+        break;
+    }
+  }
+
+  /** 终态化已有 streaming reply:换 markdown(fail 保留末帧)+ 摘 stop。非 AgentReplyEntry 时静默
+   *  (finalizeExtractionActions 据 hasStreamingReply 决策,hasStreamingReply=false 不会落到此)。 */
+  private finalizeExistingReply(entry: MessageEntry | undefined, markdown: string): void {
+    if (entry instanceof AgentReplyEntry) {
+      entry.setMarkdown(markdown, "");
       entry.update({ streaming: false, stop: undefined });
-    }
-    if (actions.appendTerminalReply !== undefined) {
-      this.appendMessage({ id: replyId, kind: "agent-reply", markdown: actions.appendTerminalReply, streaming: false });
-    }
-    if (actions.appendError !== undefined) {
-      this.appendMessage({ id: newMessageId(), kind: "error", message: actions.appendError });
     }
   }
 
