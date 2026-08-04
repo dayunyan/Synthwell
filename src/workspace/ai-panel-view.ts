@@ -23,6 +23,17 @@ export const SHIYUE_AI_PANEL_VIEW = "shiyue-ai-panel";
 /** 自动滚动粘底阈值(px):距底 ≤ 此值视为「在底」,新内容自动滚到底。 */
 const STICK_THRESHOLD = 24;
 
+/** 在飞流式回复状态(Std #2:打包 abort + replyId,去 `synthAbort`/`synthReplyId`、
+ *  `extractAbort`/`extractReplyId` Data Clump)。单 slot——一次仅一条在飞(按钮排门控整排 disabled +
+ *  新流式启动前 `finalizeStreaming` 防御性收尾 + 上下文切换 abort 三重保证)。
+ *  `onAbort` 承载 context-switch 收尾的终态化差异(synth 保留已渲染部分不显 save;extract 显「已取消」),
+ *  设于创建时,消除 kind 分支(open-closed:新流式种类自带其 onAbort,不改 finalizeStreaming)。 */
+type StreamingReplyState = {
+  abort: AbortController;
+  replyId: string;
+  onAbort: (replyId: string) => void;
+};
+
 /** 拾阅 AI 面板:聊天式宿主 shell —— 消息流(messagesEl)+ 按钮排(buttonRowEl,按需按钮,
  *  门控逻辑 slice 03)+ 输入框(inputEl,v1 禁用占位「聊天 Agent(待实现)」)。
  *
@@ -61,18 +72,13 @@ export class AiPanelView extends ItemView {
   /** 自动滚动粘底状态:真 → 新内容/渲染后自动滚到底;用户上滚超阈值 → 假,回到底恢复真。 */
   private stickToBottom = true;
 
-  // ---- 汇总流式状态(单条 streaming agent-reply)----
-  private synthAbort: AbortController | null = null;
-  private synthReplyId: string | null = null;   // 当前 streaming 汇总回复的 message id
+  // ---- 在飞流式回复状态(单条 streaming agent-reply,Std #2 打包 Data Clump)----
+  /** synth/extract 共一 slot:一次仅一条在飞(按钮排门控整排 disabled + 新流式启动前
+   *  finalizeStreaming 防御性收尾 + 上下文切换 abort 三重保证)。kind 区分 context-switch 收尾差异
+   *  (synth 保留已渲染部分不显 save;extract 显「已取消」),由 finalizeStreaming 按 kind 分支。 */
+  private streaming: StreamingReplyState | null = null;
   /** 每条汇总回复 → 其触发知识点笔记(存回用)。按 replyId 绑定,防新汇总启动后旧回复存错文件。 */
   private saveTargets = new Map<string, TFile>();
-
-  // ---- 提取流式状态(单条 streaming agent-reply,#04)----
-  /** 在飞提取的 AbortController(气泡内停止按钮调 abort;controller 透传给 extractor)。
-   *  null = 无在飞提取。一次仅一条在飞(按钮排门控整排 disabled)。 */
-  private extractAbort: AbortController | null = null;
-  /** 当前在飞提取回复的 message id(终态化 / 上下文切换打断时用)。 */
-  private extractReplyId: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, actions: PanelActions) {
     super(leaf);
@@ -167,12 +173,11 @@ export class AiPanelView extends ItemView {
   }
 
   /** 按上下文只重渲按钮排;不清消息流(消息跨上下文持久,反馈 #2)。
-   *  在飞汇总:finalize(abort + streaming=false,保留已渲染部分),不丢消息。
+   *  在飞流式:finalizeStreaming(abort + 终态化,保留已渲染部分),不丢消息。行为中立(09 / spec §10.1 改不 abort)。
    *  4 态门控(#03):pdf(两提取按钮,selection 无选区 disabled)/ knowledge-point(汇总按钮)/
    *  synthesis(无按钮 + 信息提示「综合笔记 — 汇总自 N 个知识点」)/ none(禁用占位)。 */
   private renderContext(ctx: PanelContext): void {
-    this.finalizeStreamingSynthesis();
-    this.finalizeStreamingExtraction();   // #04:切上下文 → 收尾在飞提取(abort + 终态化,保留已渲染)
+    this.finalizeStreaming();   // 切上下文 → 收尾在飞流式(abort + 终态化,保留已渲染);行为中立(09 改)
     this.buttonRowEl.empty();
     this.currentButtons = [];
     this.selBtn = null;
@@ -244,11 +249,13 @@ export class AiPanelView extends ItemView {
   /** 跑汇总:单条 streaming agent-reply 增长 + 气泡内停止按钮(AbortController 贯穿,替换
    *  LoadingNotice)。取消 → synthesizeStream 静默结束,已渲染部分保留;非 abort 错 → 追加 error 消息。 */
   private async runSynthesis(file: TFile): Promise<void> {
-    this.finalizeStreamingSynthesis();   // 兜底:不应有在飞(单条),防御性收尾
+    this.finalizeStreaming();   // 兜底:不应有在飞(单条),防御性收尾
     const abort = new AbortController();
     const replyId = newMessageId();
-    this.synthAbort = abort;
-    this.synthReplyId = replyId;
+    this.streaming = {
+      abort, replyId,
+      onAbort: (id) => this.finalizeReply(id, true),   // 保留已渲染部分,不显 save(aborted=true)
+    };
     this.saveTargets.set(replyId, file);
     // 按钮点击先发 user-action(「汇总关联笔记」)——每个按钮 → user-action + agent-reply(spec §3)。
     this.appendMessage({ id: newMessageId(), kind: "user-action", label: t("panel.btn.synthesis") });
@@ -279,11 +286,13 @@ export class AiPanelView extends ItemView {
       }
     } finally {
       this.finalizeReply(replyId, abort.signal.aborted);
+      if (this.streaming?.replyId === replyId) this.streaming = null;
     }
   }
 
-  /** 终态化一条 streaming 回复:streaming=false + 清在飞状态。aborted 时**不显 save affordance**
-   *  (用户主动停止/上下文切换打断 → 不应再存回;保留已渲染部分供阅读)。正常结束且有内容 → 显 save。 */
+  /** 终态化一条 streaming 回复的**条目**(streaming=false + stop 摘除 + affordance 决策):纯 entry 更新,
+   *  不清 streaming slot(由 finalizeStreaming / run* 终态清,防旧回调误清新在飞)。aborted 时**不显 save
+   *  affordance**(用户主动停止/上下文切换打断 → 不应再存回;保留已渲染部分供阅读)。正常结束且有内容 → 显 save。 */
   private finalizeReply(replyId: string, aborted: boolean): void {
     const e = this.entries.get(replyId);
     if (e instanceof AgentReplyEntry) {
@@ -294,17 +303,18 @@ export class AiPanelView extends ItemView {
         affordance: !aborted && hasContent ? "save" : undefined,
       });
     }
-    if (this.synthReplyId === replyId) {
-      this.synthReplyId = null;
-      this.synthAbort = null;
-    }
   }
 
-  /** 收尾在飞汇总(上下文切换 / 新汇总启动前):abort + 终态化其回复(保留部分,不显 save)。 */
-  private finalizeStreamingSynthesis(): void {
-    if (!this.synthAbort || !this.synthReplyId) return;
-    this.synthAbort.abort();
-    this.finalizeReply(this.synthReplyId, true);
+  /** 收尾在飞流式回复(上下文切换 / 新流式启动前 / 关面板):abort + 调 onAbort 终态化其 reply + 清 slot。
+   *  Std #2:去重原 finalizeStreamingSynthesis/finalizeStreamingExtraction 的守卫 + abort + 清状态重复。
+   *  终态化差异由 state.onAbort 承载(synth 保留已渲染部分,不显 save;extract 显「已取消」),无需 kind 分支。
+   *  行为中立:上下文切换仍 abort + 「已取消」(09 / spec §10.1 改不 abort)。 */
+  private finalizeStreaming(): void {
+    if (!this.streaming) return;
+    const { abort, replyId, onAbort } = this.streaming;
+    abort.abort();
+    onAbort(replyId);
+    this.streaming = null;
   }
 
   // ---- 提取流式消息生命周期(#04:每个按钮 → user-action + streaming agent-reply)----
@@ -368,18 +378,26 @@ export class AiPanelView extends ItemView {
     buildHandlers: (replyId: string, abort: AbortController, appendUserAction: () => void) => ExtractionHandlers;
     run: (handlers: ExtractionHandlers) => Promise<ExtractionResult>;
   }): Promise<void> {
-    this.finalizeStreamingExtraction();   // 兜底:不应有在飞,防御性收尾
+    this.finalizeStreaming();   // 兜底:不应有在飞,防御性收尾
     const abort = new AbortController();
     const replyId = newMessageId();
-    this.extractAbort = abort;
-    this.extractReplyId = replyId;
+    this.streaming = {
+      abort, replyId,
+      onAbort: (id) => {   // 显「已取消」(进度帧无保留价值)
+        const entry = this.entries.get(id);
+        if (entry instanceof AgentReplyEntry) {
+          entry.setMarkdown(t("extract.cancelled"), "");
+          entry.update({ streaming: false, stop: undefined });
+        }
+      },
+    };
     const appendUserAction = (): void =>
       this.appendMessage({ id: newMessageId(), kind: "user-action", label: opts.label });
     const handlers = opts.buildHandlers(replyId, abort, appendUserAction);
     let r: ExtractionResult;
     try { r = await opts.run(handlers); }
     catch (e) {
-      this.extractAbort = null; this.extractReplyId = null;
+      if (this.streaming?.replyId === replyId) this.streaming = null;
       this.appendMessage({
         id: newMessageId(), kind: "error",
         message: t(opts.errKey, { msg: e instanceof Error ? e.message : String(e) }),
@@ -387,10 +405,12 @@ export class AiPanelView extends ItemView {
       return;
     }
     this.finalizeExtractionReply(replyId, r);
+    if (this.streaming?.replyId === replyId) this.streaming = null;
   }
 
-  /** 终态化一条提取回复:据「是否已有 streaming reply」+ result 算三类动作(纯决策 finalizeExtractionActions),
-   *  面板执行 DOM。提取无 save affordance(终态化后 stop 摘除,不显 save)。 */
+  /** 终态化一条提取回复的**条目**:据「是否已有 streaming reply」+ result 算三类动作(纯决策
+   *  finalizeExtractionActions),面板执行 DOM。纯 entry 更新,不清 streaming slot(由 runExtract 终态清,
+   *  防旧回调误清新在飞)。提取无 save affordance(终态化后 stop 摘除,不显 save)。 */
   private finalizeExtractionReply(replyId: string, r: ExtractionResult): void {
     const entry = this.entries.get(replyId);
     const actions = finalizeExtractionActions(entry instanceof AgentReplyEntry, r);
@@ -404,24 +424,6 @@ export class AiPanelView extends ItemView {
     if (actions.appendError !== undefined) {
       this.appendMessage({ id: newMessageId(), kind: "error", message: actions.appendError });
     }
-    if (this.extractReplyId === replyId) {
-      this.extractReplyId = null;
-      this.extractAbort = null;
-    }
-  }
-
-  /** 收尾在飞提取(上下文切换 / 新提取启动前 / 关面板):abort + 终态化其回复(保留末帧,显「已取消」)。 */
-  private finalizeStreamingExtraction(): void {
-    if (!this.extractAbort || !this.extractReplyId) return;
-    this.extractAbort.abort();
-    const replyId = this.extractReplyId;
-    const entry = this.entries.get(replyId);
-    if (entry instanceof AgentReplyEntry) {
-      entry.setMarkdown(t("extract.cancelled"), "");
-      entry.update({ streaming: false, stop: undefined });
-    }
-    this.extractAbort = null;
-    this.extractReplyId = null;
   }
 
   /** 存为综合笔记(ADR-0006):点汇总回复的 save affordance → 追加 user-action(「存回笔记」)
@@ -495,15 +497,11 @@ export class AiPanelView extends ItemView {
     for (const e of this.entries.values()) e.unload();
     this.entries.clear();
     this.saveTargets.clear();
-    this.synthAbort = null;
-    this.synthReplyId = null;
-    this.extractAbort = null;
-    this.extractReplyId = null;
+    this.streaming = null;
   }
 
   async onClose(): Promise<void> {
-    this.finalizeStreamingSynthesis();
-    this.finalizeStreamingExtraction();
+    this.finalizeStreaming();
     this.messagesEl.removeEventListener("scroll", this.onMessagesScroll);
     this.messagesEl.removeEventListener("click", this.onMessagesClick, true);
     this.detachContext?.();
